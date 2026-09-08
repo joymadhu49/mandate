@@ -55,5 +55,12 @@ test('operator-only routes and the browser landing page', async t => {
     const html = await page.text();
     assert.match(html, /Mandate/); assert.match(html, /connects to Mandate automatically/); assert.doesNotMatch(html, /Settings → Backend/); assert.match(html, /testflight\.apple\.com\/join\/abc/);
     assert.match(html, /Simulation/);
+    for (const headers of [{ accept: '*/*' }, {}]) {
+      const crawler = await app.request('/', { headers });
+      assert.match(crawler.headers.get('content-type') ?? '', /text\/html/);
+      assert.match(await crawler.text(), /<meta name="base:app_id" content="6a9fb9f7ad9c34826110fd88">/);
+    }
+    const health = await app.request('/', { headers: { accept: 'application/json' } });
+    assert.deepEqual(await health.json(), { ok: true, name: 'mandate-agent', dryRun: true });
   });
 });

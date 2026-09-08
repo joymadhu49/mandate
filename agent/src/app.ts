@@ -72,7 +72,10 @@ const SellPermission = z.object({ spender: addr, token: addr, allowance: uintStr
 
 // Browsers get the landing page; the app and other API clients get the health document.
 app.get('/', (c) => {
-  if (c.req.header('accept')?.includes('text/html')) {
+  const accept = c.req.header('accept') ?? '*/*';
+  const jsonClient = accept.includes('application/json') || c.req.header('content-type')?.includes('application/json');
+  // Domain verifiers and link crawlers commonly request */* instead of text/html.
+  if (accept.includes('text/html') || (!jsonClient && accept.includes('*/*'))) {
     const host = c.req.header('x-forwarded-host') ?? c.req.header('host') ?? 'localhost:8842';
     const proto = c.req.header('x-forwarded-proto') ?? (host.startsWith('localhost') ? 'http' : 'https');
     return c.html(landingPage({

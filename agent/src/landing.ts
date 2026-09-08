@@ -1,5 +1,5 @@
 // The backend's root for browsers: what Mandate is and how to get the app.
-// API clients (the app, curl) still get the JSON health document; see app.ts.
+// Explicit JSON API clients still get the health document; see app.ts.
 
 const escape = (s: string) => s.replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch] as string));
 
@@ -9,6 +9,7 @@ export function landingPage(input: { publicUrl: string; testFlightUrl?: string; 
   const mode = input.dryRun ? 'Simulation · no real funds' : 'Live · real funds';
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="base:app_id" content="6a9fb9f7ad9c34826110fd88">
 <title>Mandate</title>
 <style>
   :root{--bg:#0A0A0F;--card:#14141C;--line:#262633;--text:#F2F2F7;--muted:#9A9AAE;--base:#0052FF;--link:#729FFF;--amber:#F59E0B}
