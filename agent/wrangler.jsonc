@@ -1,0 +1,60 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mandate-agent",
+  "account_id": "3f75706f6e6298ccac1a712fff41a411",
+  "main": "src/cloudflare.ts",
+  "compatibility_date": "2026-09-08",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": true,
+  "preview_urls": false,
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "LEDGER",
+        "class_name": "MandateLedger"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "MandateLedger"
+      ]
+    }
+  ],
+  "assets": {
+    "directory": "cloud-assets",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "vars": {
+    "CLOUDFLARE_WORKER": "1",
+    "NODE_ENV": "production",
+    "SCHEDULER_ENABLED": "1",
+    "PUBLIC_URL": "https://mandate.horizonbase.app",
+    "TESTFLIGHT_URL": "https://testflight.apple.com/join/xNpkKz9g",
+    "MODEL": "google/gemini-2.5-flash",
+    "AI_DAILY_TOKENS_WALLET": "120000",
+    "AI_DAILY_TOKENS_GLOBAL": "1500000",
+    "BASE_RPC_URL": "https://base-mainnet.g.alchemy.com/public",
+    "BASE_RPC_FALLBACK_URL": "https://base-rpc.publicnode.com"
+  },
+  "triggers": {
+    "crons": [
+      "* * * * *"
+    ]
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "routes": [
+    {
+      "pattern": "mandate.horizonbase.app/*",
+      "zone_name": "horizonbase.app"
+    }
+  ]
+}

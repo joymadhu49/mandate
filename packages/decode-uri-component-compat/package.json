@@ -1,0 +1,7 @@
+{
+  "name": "@mandate/decode-uri-component-compat",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.cjs",
+  "dependencies": { "patched-decoder": "npm:decode-uri-component@0.5.0" }
+}

@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import { readFileSync,writeFileSync } from 'node:fs';
+const saved = JSON.parse(readFileSync('.wrangler/test-session.json','utf8'));
+const base='http://127.0.0.1:8897';
+const api=(path,body,token=saved.session.token)=>fetch(base+path,{method:body===undefined?'GET':'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})});
+assert.equal((await api('/auth/session')).status,200);
+const verification=await api('/auth/verify',{nonce:saved.challenge.nonce,signature:saved.signature});
+assert.equal(verification.status,200,await verification.clone().text());
+const account=saved.session.account;
+const agent=await (await api('/agent')).json();
+const now=Math.floor(Date.now()/1000),usdc='0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+const input={account,control:'chat',budgetUsdc:10,period:'daily',universe:['0xb200000000000000000000C2e324d24d7eEcd1fb'],strategy:'',risk:'balanced',maxPositionPct:50,takeProfitPct:10,stopLossPct:5,batch:{account,period:86400,start:now-1,end:now+86400,permissions:[{spender:agent.spender,token:usdc,allowance:'10000000',salt:'1',extraData:'0x'}]}};
+const response=await api('/mandates',input);
+assert.equal(response.status,201,await response.clone().text());
+const mandate=await response.json();
+assert.equal(mandate.status,'pending');
+writeFileSync('.wrangler/test-mandate.json',JSON.stringify({id:mandate.id}),{mode:0o600});
+console.log('PASS: session and unused challenge survived worker restart. Created a simulation-only mandate for the no-traffic alarm test.');

@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {randomUUID} from 'node:crypto';
+const {session}=JSON.parse(readFileSync('data/cloud-smoke-session.json','utf8'));
+const headers={authorization:`Bearer ${session.token}`,'content-type':'application/json'};
+const alive=await fetch('https://mandate.horizonbase.app/auth/session',{headers});
+assert.equal(alive.status,200);
+console.log('PASS: production session survived redeployment.');
+const start=Date.now();
+const response=await fetch('https://mandate.horizonbase.app/chat',{method:'POST',headers,body:JSON.stringify({requestId:randomUUID(),message:'Name two stocks supported in this app. Do not propose a trade.'}),signal:AbortSignal.timeout(40000)});
+const result=await response.json();
+console.log('Research request:',response.status,'durationMs',Date.now()-start,'hasText',Boolean(result.text),'error',result.error??null);
+assert.equal(response.status,200);
+assert.equal(result.proposal,undefined);
+console.log('PASS: AI research works without any spending approval.');

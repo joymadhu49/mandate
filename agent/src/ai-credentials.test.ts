@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { AICredentials } from './ai-credentials.js';
+import { atomicWriteJson } from './persistence.js';
+
+test('AI credentials persist encrypted, isolate wallets and reject tampering', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'mandate-credentials-test-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const path = join(directory, 'credentials.json');
+  const a = `0x${'1'.repeat(40)}`, b = `0x${'2'.repeat(40)}`;
+  const settings = { apiKey: 'sk-or-test-not-a-real-api-key', model: 'test/model' };
+  const store = new AICredentials(path);
+  store.set(a, settings);
+  assert.deepEqual(new AICredentials(path).get(a), settings);
+  assert.equal(store.get(b), undefined);
+  assert.ok(!readFileSync(path, 'utf8').includes(settings.apiKey));
+  assert.equal(statSync(path).mode & 0o777, 0o600);
+  assert.equal(statSync(`${path}.key`).mode & 0o777, 0o600);
+  const records = JSON.parse(readFileSync(path, 'utf8'));
+  records[b] = records[a];
+  atomicWriteJson(path, records);
+  assert.throws(() => store.get(b));
+  store.remove(b);
+  assert.deepEqual(store.get(a), settings);
+  store.remove(a);
+  assert.equal(new AICredentials(path).get(a), undefined);
+});

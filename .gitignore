@@ -39,3 +39,67 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# mandate
+agent/.env
+agent/.env.*
+!agent/.env.example
+agent/data/
+*.ai-credentials.json
+*.ai-credentials.json.key
+ios/Pods/
+ios/build/
+# App Review demo recordings are large and private to the review
+agent/public/demo/*.mp4
+agent/public/demo/*.mov
+
+# Cloudflare local state, staging assets and secret inputs
+.wrangler/
+.dev.vars*
+agent/cloud-assets/
+agent/worker-configuration.d.ts
+
+# Secrets at any depth (only the reviewed blank template is publishable)
+.env
+.env.*
+*.env
+*.env.*
+!/agent/.env.example
+*.pfx
+*.keystore
+id_rsa*
+id_ed25519*
+credentials.json
+service-account*.json
+secrets.json
+*.sqlite
+*.sqlite3
+*.db
+*.log
+*.bak
+*.backup
+*.xcarchive/
+*.ipa
+*.dSYM/
+*.zip
+*.mp4
+*.MP4
+*.mov
+*.MOV
+
+# Local tooling, review captures and private session/launch notes
+.claude/
+.impeccable/
+HANDOFF.md
+REVIEW_FIXES.md
+docs/SESSION-*.md
+docs/TESTFLIGHT-NOTES.md
+docs/SUBMISSION.md
+assets/mandate-icon.prompt.md
+scripts/render-showcase.mjs
+scripts/showcase-background.swift
+
+# A placeholder keeps the ignored deployment asset directory available on clone
+!agent/cloud-assets/
+agent/cloud-assets/*
+!agent/cloud-assets/.gitkeep
