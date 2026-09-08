@@ -12,6 +12,7 @@ test('pipeline test plans honestly and executes only when live, funded and confi
   delete process.env.DRY_RUN; delete process.env.LOCK_MODE;
   process.env.AGENT_PRIVATE_KEY = generatePrivateKey(); process.env.OPENROUTER_API_KEY = '';
   const { app } = await import('./app.js');
+  await (await import('../test-support/eligibility.js')).eligibleOwnerFixture(t);
   const { config } = await import('./config.js');
   const { db } = await import('./db.js');
   const { publicClient, walletClient, spender, USDC, ETH_USD_FEED } = await import('./chain.js');

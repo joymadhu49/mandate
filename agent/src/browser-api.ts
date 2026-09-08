@@ -1,7 +1,7 @@
 // Browser transport for the existing durable wallet sessions. Native bearer routes
 // remain unchanged. The browser never receives the bearer token in JSON or JS storage.
 const COOKIE = '__Host-mandate_session';
-const ROUTES = /^\/(?:auth\/(?:challenge|verify|session|logout)|agent|orders(?:\/[^/]+\/cancel)?|mandates(?:\/[^/]+(?:\/(?:run|permissions|revoke))?)?|activity|chat(?:\/(?:proposals\/[^/]+\/confirm|authorization\/[^/]+))?|ai\/(?:models|settings|draft)|mode|test-swap\/wallet)\/?$/;
+const ROUTES = /^\/(?:eligibility(?:\/location)?|auth\/(?:challenge|verify|session|logout)|agent|orders(?:\/[^/]+\/cancel)?|mandates(?:\/[^/]+(?:\/(?:run|permissions|revoke))?)?|activity|chat(?:\/(?:proposals\/[^/]+\/confirm|authorization\/[^/]+))?|ai\/(?:models|settings|draft)|mode|test-swap\/wallet)\/?$/;
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(body, { status, headers: { 'cache-control': 'no-store', ...headers } });
 const cookie = (value: string, seconds: number) => `${COOKIE}=${value}; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=${seconds}`;
 type Forward = (request: Request) => Promise<Response>;
@@ -20,6 +20,7 @@ export async function browserAPI(request: Request, origin: string, forward: Forw
   const headers = new Headers({ accept: 'application/json', 'content-type': 'application/json' });
   // The Worker overwrites this from Cloudflare's transport before invoking us.
   headers.set('x-mandate-client-ip', request.headers.get('x-mandate-client-ip') ?? 'unknown');
+  headers.set('x-mandate-country', request.headers.get('x-mandate-country') ?? 'XX');
   if (token && /^[a-f0-9]{64}$/.test(token)) headers.set('authorization', `Bearer ${token}`);
   let body: Uint8Array | undefined;
   if (write && request.body) {
@@ -49,7 +50,7 @@ export async function browserAPI(request: Request, origin: string, forward: Forw
   } catch { return json({ error: 'The agent is temporarily unavailable. Please try again.' }, 503); }
 }
 
-const WEB_PAGES = /^\/(?:home|agent|orders|history|settings|new-mandate|profile|ai-settings|mandate\/[^/]+|order\/[^/]+)?\/?$/;
+const WEB_PAGES = /^\/(?:home|agent|orders|history|settings|eligibility|new-mandate|profile|ai-settings|mandate\/[^/]+|order\/[^/]+)?\/?$/;
 export function wantsWebApp(request: Request) {
   if (!['GET', 'HEAD'].includes(request.method) || !WEB_PAGES.test(new URL(request.url).pathname)) return false;
   const accept = request.headers.get('accept') ?? '*/*';

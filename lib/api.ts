@@ -5,6 +5,9 @@ import { sessionToken, saveSession, clearSession, invalidateSession } from './se
 import { validateBackendURL } from './backend-url';
 import { usePreferences } from './preferences';
 
+export interface EligibilityStatus { allowed: boolean; reason: string; version: string; country: string | null; residenceCountry: string | null; expiresAt: number | null }
+export interface EligibilityDeclaration { version: string; residenceCountry: string; nonUsPerson: boolean; eligibleJurisdiction: boolean; accurate: boolean }
+
 export type Risk = 'conservative' | 'balanced' | 'aggressive';
 
 export interface AIStatus {
@@ -118,7 +121,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const timer = setTimeout(() => controller.abort(), 40_000);
   try {
     validateBackendURL(base);
-    const privateRoute = /^\/(orders|mandates|activity|chat|ai|mode|test-swap)(\/|\?|$)/.test(path) || path === '/auth/session' || path === '/auth/logout';
+    const privateRoute = /^\/(orders|mandates|activity|chat|ai|mode|test-swap|eligibility)(\/|\?|$)/.test(path) || path === '/auth/session' || path === '/auth/logout';
     const token = privateRoute || path === '/agent' ? await sessionToken(base) : undefined;
     const res = await fetch(`${base}${path}`, {
       ...init, signal: controller.signal,
@@ -150,6 +153,11 @@ function asBackendPing(body: unknown): BackendPing | undefined {
 }
 
 export const api = {
+  location: () => req<{country: string | null; locationAllowed: boolean; countries: {code: string; name: string}[]}>('/eligibility/location'),
+  eligibility: () => req<EligibilityStatus>('/eligibility'),
+  withdrawEligibility: () => req<EligibilityStatus>('/eligibility', { method: 'DELETE' }),
+  declareEligibility: (body: EligibilityDeclaration) => req<EligibilityStatus>('/eligibility', { method: 'POST', body: JSON.stringify(body) }),
+  assertEligibility: async () => { const status = await req<EligibilityStatus>('/eligibility'); if (!status.allowed) throw new APIError(status.reason, 403); },
   chatHistory: () => req<ChatMessage[]>('/chat'),
   chat: (body: { requestId: string; message: string; mandateId?: string }) => req<ChatMessage>('/chat', { method: 'POST', body: JSON.stringify(body) }),
   /** Clears the verified wallet's conversation: messages and unconfirmed proposals. */

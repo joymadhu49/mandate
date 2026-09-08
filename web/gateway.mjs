@@ -4,7 +4,7 @@ const COOKIE = 'mandate_local_session';
 const JSON_HEADERS = { 'content-type': 'application/json', 'cache-control': 'no-store' };
 const json = (body, status = 200, headers = {}) => new Response(JSON.stringify(body), { status, headers: { ...JSON_HEADERS, ...headers } });
 // Explicitly allow only the public app API. Never proxy migration or operator internals.
-const ROUTES = /^\/(?:auth\/(?:challenge|verify|session|logout)|agent|orders(?:\/[^/]+\/cancel)?|mandates(?:\/[^/]+(?:\/(?:run|permissions|revoke))?)?|activity|chat(?:\/(?:proposals\/[^/]+\/confirm|authorization\/[^/]+))?|ai\/(?:models|settings|draft)|mode|test-swap\/wallet)\/?$/;
+const ROUTES = /^\/(?:eligibility(?:\/location)?|auth\/(?:challenge|verify|session|logout)|agent|orders(?:\/[^/]+\/cancel)?|mandates(?:\/[^/]+(?:\/(?:run|permissions|revoke))?)?|activity|chat(?:\/(?:proposals\/[^/]+\/confirm|authorization\/[^/]+))?|ai\/(?:models|settings|draft)|mode|test-swap\/wallet)\/?$/;
 
 /** Local-only browser gateway. No environment files or signing keys are loaded. */
 export function createGateway({ origin, upstream = 'https://mandate.horizonbase.app', fetcher = fetch, now = Date.now }) {

@@ -13,6 +13,7 @@ test('mandates from the other execution mode stay dormant and can always be revo
   delete process.env.DRY_RUN; delete process.env.LOCK_MODE;
   process.env.AGENT_PRIVATE_KEY = generatePrivateKey(); process.env.OPENROUTER_API_KEY = '';
   const { app } = await import('./app.js');
+  await (await import('../test-support/eligibility.js')).eligibleOwnerFixture(t);
   const { config } = await import('./config.js');
   const { db } = await import('./db.js');
   const { publicClient, walletClient, spender, STOCKS } = await import('./chain.js');

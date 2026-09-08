@@ -12,6 +12,7 @@ test('unsigned mandates require authenticated ownership and confirmed exact onch
   const dir=mkdtempSync(join(tmpdir(),'mandate-onchain-test-'));
   process.env.DB_PATH=join(dir,'db.json');process.env.NODE_ENV='test';process.env.AGENT_PRIVATE_KEY=generatePrivateKey();process.env.OPENROUTER_API_KEY='';
   const {app}=await import('./app.js'); const {config}=await import('./config.js'); const {publicClient,spenderFor}=await import('./chain.js');
+  await (await import('../test-support/eligibility.js')).eligibleOwnerFixture(t);
   const {db}=await import('./db.js');config.dryRun=false;
   t.after(()=>{config.dryRun=true;rmSync(dir,{recursive:true,force:true});});
   t.mock.method(publicClient,'verifyMessage',async(args:Parameters<typeof publicClient.verifyMessage>[0])=>verifyMessage(args));

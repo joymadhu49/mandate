@@ -13,6 +13,7 @@ test('chat research, authorization and confirmed orders stay inside trust bounda
   process.env.DB_PATH = join(directory, 'db.json'); process.env.DRY_RUN = '1'; process.env.NODE_ENV = 'test';
   process.env.AGENT_PRIVATE_KEY = ''; process.env.OPENROUTER_API_KEY = '';
   const { app } = await import('./app.js');
+  await (await import('../test-support/eligibility.js')).eligibleOwnerFixture(t);
   const { db } = await import('./db.js');
   const { chats, makeProposal, validateTrade } = await import('./chat.js');
   const { runMandate, executeOrder } = await import('./runner.js');

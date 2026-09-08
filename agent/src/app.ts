@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { eligibilityMiddleware, eligibilityRoutes } from './eligibility-routes.js';
 import { cors } from 'hono/cors';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
@@ -22,6 +23,8 @@ import { requestEvaluation } from './cloud-scheduler.js';
 export const app = new Hono<AuthEnv>();
 app.use('*', cors());
 app.use('*', bodyLimit({ maxSize: 1_000_000, onError: c => c.json({ error: 'Request too large.' }, 413) }));
+app.use('*', eligibilityMiddleware);
+app.route('/eligibility', eligibilityRoutes);
 app.route('/ai', aiRoutes);
 app.route('/auth', authRoutes);
 app.route('/chat', chatRoutes);

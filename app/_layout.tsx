@@ -54,6 +54,7 @@ export default function RootLayout() {
           <Stack.Screen name="new-mandate" options={{ title: 'New mandate', presentation: 'modal' }} />
           {/* Nested pages own their title in content (34pt); the native bar carries only the back chevron. */}
           <Stack.Screen name="mandate/[id]" options={{ title: 'Mandate', headerTitle: '' }} />
+          <Stack.Screen name="eligibility" options={{ title: 'Trading eligibility', headerTitle: '' }} />
           <Stack.Screen name="profile" options={{ title: 'Profile & wallet', headerTitle: '' }} />
           <Stack.Screen name="ai-settings" options={{ title: 'AI settings', headerTitle: '' }} />
           <Stack.Screen name="order/[id]" options={{ title: 'Order', headerTitle: '' }} />

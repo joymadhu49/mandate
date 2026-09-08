@@ -4,6 +4,7 @@
 import { formatEther, formatUnits, parseEther } from 'viem';
 import type { PrivateKeyAccount } from 'viem/accounts';
 import { config } from './config.js';
+import { eligibility } from './eligibility.js';
 import { db, save, uid } from './db.js';
 import { USDC, balanceOf, ethBalance, ethUsdPrice, publicClient, sendTx, spenderFor } from './chain.js';
 import { NATIVE_TOKEN, quoteSwap, type SwapQuote } from './lifi.js';
@@ -114,6 +115,7 @@ export async function planWalletSwap(account: Address, usd: number): Promise<Wal
 let running = false;
 
 export async function runPipelineTest(account: Address, usd: number): Promise<PipelineResult> {
+  eligibility.assert(account);
   if (running) throw new PipelineError('A pipeline test is already running.');
   running = true;
   try {
@@ -124,7 +126,7 @@ export async function runPipelineTest(account: Address, usd: number): Promise<Pi
     db.pipelineTests.unshift(entry); save();
     const [usdcBefore, ethBefore] = await Promise.all([balanceOf(USDC, agent.address), ethBalance(agent.address)]);
     try {
-      const hash = await sendTx(quote.to, quote.data, quote.value, (h, status) => { entry.hash = h; entry.status = status; save(); }, agent);
+      const hash = await sendTx(quote.to, quote.data, quote.value, (h, status) => { entry.hash = h; entry.status = status; save(); }, agent, () => eligibility.assert(account));
       const [usdcAfter, ethAfter] = await Promise.all([balanceOf(USDC, agent.address), ethBalance(agent.address)]);
       entry.usdcReceived = Number(formatUnits(usdcAfter - usdcBefore, 6));
       entry.ethSpent = Number(formatEther(ethBefore - ethAfter));

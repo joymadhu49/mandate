@@ -118,6 +118,7 @@ export default function Settings() {
 
       <View style={appStyles.section}>
         <SectionHeader title="Live trading" />
+        <SettingRow icon="lock.shield" title="Trading eligibility" detail="Review your location and eligibility declaration" onPress={() => router.push('/eligibility')} />
         <View style={appStyles.group}>
           <SettingRow icon="bolt.fill" title="Live mode" detail={liveDetail(agent)}
             trailing={<PreferenceSwitch label="Live mode" value={!!agent.data && !agent.data.dryRun} onChange={toggleLive}

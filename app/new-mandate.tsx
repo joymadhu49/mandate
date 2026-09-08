@@ -1,3 +1,4 @@
+import { AccountAccess } from '@/components/account-access';
 // New mandate modal: Budget → Stocks → Rules → Who starts a trade → (automatic only) Instructions,
 // then a review sheet that replaces the old Alert as the financial confirmation.
 // Review renders inside this screen so wallet auth has no nested native sheet.
@@ -122,7 +123,8 @@ function draftHint(agent: AgentInfo | undefined) {
 
 // ---- Screen ------------------------------------------------------------------
 
-export default function NewMandate() {
+export default function NewMandate() { return <AccountAccess trading><NewMandateForm /></AccountAccess>; }
+function NewMandateForm() {
   const router = useRouter();
   const qc = useQueryClient();
   const address = useWallet(s => s.address)!;

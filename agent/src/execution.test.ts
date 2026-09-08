@@ -28,6 +28,7 @@ function quoteResponse() {
 }
 
 test('execution safety regressions without network or signing real transactions', async t => {
+  await (await import('../test-support/eligibility.js')).eligibleOwnerFixture(t);
   t.after(() => { resetAISettings(); rmSync(directory, { recursive: true, force: true }); });
   t.mock.method(globalThis, 'fetch', async () => { throw new Error('Unexpected external request'); });
   let submitted = 0;

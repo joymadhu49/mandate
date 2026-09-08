@@ -13,6 +13,7 @@ test('chat mandates approve USDC at setup and each stock the first time it is so
   const dir = mkdtempSync(join(tmpdir(), 'mandate-sell-permissions-'));
   process.env.DB_PATH = join(dir, 'db.json'); process.env.NODE_ENV = 'test'; process.env.AGENT_PRIVATE_KEY = generatePrivateKey(); process.env.OPENROUTER_API_KEY = '';
   const { app } = await import('./app.js'); const { config } = await import('./config.js');
+  await (await import('../test-support/eligibility.js')).eligibleOwnerFixture(t);
   const { publicClient, walletClient, spenderFor, spmAbi } = await import('./chain.js');
   const { db } = await import('./db.js'); const { chats } = await import('./chat.js');
   const { sellApprovalNeeded } = await import('./permissions.js');

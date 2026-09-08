@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { eligibility } from './eligibility.js';
 import { db } from './db.js';
 import { config } from './config.js';
 import { executeOrder, modeMatches, runMandate } from './runner.js';
@@ -6,7 +7,7 @@ import { atomicWriteJson, loadValidatedJson } from './persistence.js';
 
 const Schedule = z.record(z.number());
 const schedulePath = '/data/schedule.json';
-const eligible = (schedule: Record<string, number>) => db.mandates.filter(m => ['active', 'pending'].includes(m.status) && modeMatches(m) && (m.status === 'pending' || m.control !== 'chat' || schedule[m.id] === 0));
+const eligible = (schedule: Record<string, number>) => db.mandates.filter(m => ['active', 'pending'].includes(m.status) && modeMatches(m) && (config.dryRun || eligibility.status(m.account).allowed) && (m.status === 'pending' || m.control !== 'chat' || schedule[m.id] === 0));
 
 export function requestEvaluation(id: string) {
   const schedule = loadValidatedJson(schedulePath, Schedule, {});

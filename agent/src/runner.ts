@@ -1,5 +1,6 @@
 import { formatUnits, parseUnits } from 'viem';
 import { config } from './config.js';
+import { eligibility } from './eligibility.js';
 import type { PrivateKeyAccount } from 'viem/accounts';
 import { db, log, positionsFor, save, uid } from './db.js';
 import {
@@ -140,7 +141,7 @@ async function ensureApproved(m: Mandate) {
     if (request.permission && await isPermissionApproved(m.batch, request.permission)) continue;
     await assertFees(m);
     try {
-      m.approvalTx = await sendTx(SPEND_PERMISSION_MANAGER, request.data, 0n, recorder(m, 'permission-approval'), spenderFor(m.account));
+      m.approvalTx = await sendTx(SPEND_PERMISSION_MANAGER, request.data, 0n, recorder(m, 'permission-approval'), spenderFor(m.account), () => eligibility.assert(m.account));
     } catch (error) { throw activationFailure(m, error); }
     save(); // Preserve partial registration so a retry can skip completed approvals.
   }
@@ -154,12 +155,13 @@ async function ensureApproved(m: Mandate) {
  * An already approved permission is left alone; a revoked one is refused rather than re-registered.
  */
 export async function registerPermission(m: Mandate, permission: PermissionDetails): Promise<{ hash?: `0x${string}` }> {
+  eligibility.assert(m.account);
   return withMandateLock(m.id, async () => {
     if (await isPermissionApproved(m.batch, permission)) return {};
     if (await isPermissionRevoked(m.batch, permission)) throw new Error('This permission was revoked in Base Account. Create a new mandate.');
     await assertFees(m);
     const [request] = approvalRequests({ batch: { ...m.batch, permissions: [permission] } });
-    const hash = await sendTx(SPEND_PERMISSION_MANAGER, request.data, 0n, recorder(m, 'permission-approval'), spenderFor(m.account));
+    const hash = await sendTx(SPEND_PERMISSION_MANAGER, request.data, 0n, recorder(m, 'permission-approval'), spenderFor(m.account), () => eligibility.assert(m.account));
     return { hash };
   });
 }
@@ -168,18 +170,18 @@ async function pullFromUser(m: Mandate, token: `0x${string}`, amount: bigint, or
   const p = m.batch.permissions.find((x) => x.token.toLowerCase() === token.toLowerCase());
   if (!p) throw new Error(`No permission for token ${token}`);
   const data = encode({ abi: spmAbi, functionName: 'spend', args: [permissionFromBatch(m.batch, p), amount] });
-  return sendTx(SPEND_PERMISSION_MANAGER, data, 0n, recorder(order, 'pull'), spenderFor(m.account));
+  return sendTx(SPEND_PERMISSION_MANAGER, data, 0n, recorder(order, 'pull'), spenderFor(m.account), () => eligibility.assert(m.account));
 }
 
 async function swap(fromToken: `0x${string}`, toToken: `0x${string}`, amount: bigint, q: SwapQuote, order: Order, from: PrivateKeyAccount) {
   if (Date.now() >= q.expiresAt) throw new Error('Swap quote expired. Reconciliation is required.');
   const allowance = await publicClient.readContract({ address: fromToken, abi: erc20Abi, functionName: 'allowance', args: [from.address, q.approvalAddress] });
   if (allowance < amount) {
-    await sendTx(fromToken, encode({ abi: erc20Abi, functionName: 'approve', args: [q.approvalAddress, amount] }), 0n, recorder(order, 'swap-approval'), from);
+    await sendTx(fromToken, encode({ abi: erc20Abi, functionName: 'approve', args: [q.approvalAddress, amount] }), 0n, recorder(order, 'swap-approval'), from, () => eligibility.assert(order.account));
   }
   const before = await publicClient.readContract({ address: toToken, abi: erc20Abi, functionName: 'balanceOf', args: [from.address] });
   if (Date.now() >= q.expiresAt) throw new Error('Swap quote expired. Reconciliation is required.');
-  const hash = await sendTx(q.to, q.data, q.value, recorder(order, 'swap'), from);
+  const hash = await sendTx(q.to, q.data, q.value, recorder(order, 'swap'), from, () => eligibility.assert(order.account));
   const after = await publicClient.readContract({ address: toToken, abi: erc20Abi, functionName: 'balanceOf', args: [from.address] });
   const received = after - before;
   if (received <= 0n || received < q.toAmountMin) throw new Error('Swap output is below the minimum.');
@@ -269,6 +271,7 @@ export async function runMandate(m: Mandate) {
   if (m.status === 'revoked' || m.status === 'error') return;
   // Mode is switchable at runtime: a mandate from the other mode is dormant, not broken.
   if (!modeMatches(m)) return;
+  if (!config.dryRun && !eligibility.status(m.account).allowed) return;
   if (now() < m.batch.start) return;
   if (now() > m.batch.end) {
     m.status = 'expired';
@@ -348,6 +351,9 @@ export async function executeOrder(order: Order) {
   if (order.dryRun !== config.dryRun || !modeMatches(m)) {
     order.status = 'cancelled'; order.error = 'The backend switched execution mode before this order ran. Ask for a new proposal.';
     order.updatedAt = now(); save(); return;
+  }
+  if (!order.dryRun && !eligibility.status(m.account).allowed) {
+    order.status = 'cancelled'; order.error = eligibility.status(m.account).reason; order.updatedAt = now(); save(); return;
   }
   running.add(m.id);
   order.status = 'executing'; order.updatedAt = now(); save();

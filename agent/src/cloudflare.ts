@@ -1,6 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { timingSafeEqual, createHash } from 'node:crypto';
 import { browserAPI, wantsWebApp } from './browser-api.js';
+import { withTrustedCountry } from './eligibility-edge.js';
 import { app } from './app.js';
 import { withRuntime, type RuntimeStore } from './runtime.js';
 import { importSnapshot } from './migration.js';
@@ -152,7 +153,7 @@ export default {
       return result;
     }
     try {
-      const headers = new Headers(request.headers);
+      const headers = withTrustedCountry(request);
       // Only Cloudflare's transport value is trusted; discard any caller-supplied internal header.
       headers.set('x-mandate-client-ip', request.headers.get('cf-connecting-ip') ?? 'unknown');
       const forwarded = new Request(request, { headers });

@@ -1,3 +1,5 @@
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/lib/api';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,6 +10,7 @@ import { colors } from '@/lib/theme';
 import { PREVIEW_ACCOUNT } from '@/lib/preview';
 
 export default function Welcome() {
+  const location = useQuery({ queryKey: ['eligibility-location'], queryFn: api.location, retry: false });
   const insets = useSafeAreaInsets();
   const connecting = useWallet(s => s.connecting);
   const connect = useWallet(s => s.connect);
@@ -38,7 +41,7 @@ export default function Welcome() {
         </View>
       </View>
       <View style={styles.actions}>
-        <Muted style={styles.note}>Available to eligible users outside the U.S.</Muted>
+        <Muted style={styles.note}>{location.data && !location.data.locationAllowed ? 'Trading is unavailable from this connection. Sign in to view your account or revoke permissions.' : 'Available to eligible users outside the U.S. Trading requires an eligibility check.'}</Muted>
         <Pressable accessibilityRole="button" accessibilityLabel="Connect with Coinbase" accessibilityState={{ disabled: connecting, busy: connecting }}
           disabled={connecting} onPress={onConnect} style={({ pressed }) => [styles.coinbase, (pressed || connecting) && styles.coinbasePressed]}>
           {connecting

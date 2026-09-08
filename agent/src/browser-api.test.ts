@@ -27,7 +27,7 @@ test('only the cookie supplies browser authorization; native CORS headers are re
 });
 test('CSRF, other origins, migration routes and oversized bodies fail closed', async () => {
   const forward = async () => { throw new Error('Must not be called'); };
-  for (const headers of [{ origin: 'https://evil.example' }, { origin: '' }, { 'content-type': 'text/plain' }, { 'sec-fetch-site': 'cross-site' }]) {
+  for (const headers of [{ origin: 'https://evil.example' }, { origin: '' }, { 'content-type': 'text/plain' }, { 'sec-fetch-site': 'cross-site' }] as Record<string, string>[]) {
     assert.equal((await browserAPI(request('/auth/challenge', 'POST', headers), origin, forward)).status, 403);
   }
   assert.equal((await browserAPI(new Request('https://other.example/api/agent'), origin, forward)).status, 403);

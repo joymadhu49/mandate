@@ -173,7 +173,7 @@ export async function ethUsdPrice(): Promise<{ price: number; updatedAt: number 
 export const ethBalance = (owner: Address) => publicClient.getBalance({ address: owner });
 
 let transactionTail = Promise.resolve();
-export async function sendTx(to: Address, data: Hex, value = 0n, record?: (hash: Hex, status: TransactionStep['status']) => void, from: PrivateKeyAccount = spender) {
+export async function sendTx(to: Address, data: Hex, value = 0n, record?: (hash: Hex, status: TransactionStep['status']) => void, from: PrivateKeyAccount = spender, beforeSend?: () => void) {
   if (cloudRuntime && process.env.SCHEDULER_ENABLED !== '1') throw new Error('Trading is temporarily paused for maintenance.');
   // One spender owns the nonce sequence across approvals, orders and revocations.
   const previous = transactionTail;
@@ -181,12 +181,14 @@ export async function sendTx(to: Address, data: Hex, value = 0n, record?: (hash:
   transactionTail = new Promise<void>(resolve => { release = resolve; });
   await previous;
   try {
+    beforeSend?.();
     const request = await walletClient.prepareTransactionRequest({ account: from, to, data, value });
     const signed = await walletClient.signTransaction({ ...request, account: from } as Parameters<typeof walletClient.signTransaction>[0]);
     const hash = keccak256(signed);
     // Durably record the hash BEFORE broadcasting. A crash cannot hide a submitted step.
     record?.(hash, 'prepared');
     await flushPersistence(); // Cloud storage must commit before any onchain broadcast.
+    beforeSend?.(); // Recheck after nonce wait, signing and persistence awaits.
     await walletClient.sendRawTransaction({ serializedTransaction: signed });
     const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000 });
     if (receipt.status !== 'success') { record?.(hash, 'failed'); throw new Error('Transaction reverted.'); }

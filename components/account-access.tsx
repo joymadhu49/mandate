@@ -1,6 +1,7 @@
 // Gate for wallet-scoped content. Verifies the connected wallet with a sign-in
 // message (not a spending approval) before private data is requested.
 import React from 'react';
+import { EligibilityAccess } from './eligibility-access';
 import { StyleSheet, View } from 'react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -12,7 +13,7 @@ import { Icon } from './app-ui';
 /** A 401 is the expected "not signed in yet" answer, not an outage worth a message. */
 const isUnauthorized = (error: Error) => 'status' in error && error.status === 401;
 
-export function AccountAccess({ children }: { children: React.ReactNode }) {
+export function AccountAccess({ children, showEligibility = true, trading = false }: { children: React.ReactNode; showEligibility?: boolean; trading?: boolean }) {
   const address = useWallet(s => s.address)!;
   const qc = useQueryClient();
   const session = useQuery({
@@ -22,7 +23,7 @@ export function AccountAccess({ children }: { children: React.ReactNode }) {
     mutationFn: () => api.verifyWallet(address, message => signInMessage(address, message)),
     onSuccess: () => qc.invalidateQueries(),
   });
-  if (session.data?.account.toLowerCase() === address?.toLowerCase() && !session.isError) return <>{children}</>;
+  if (session.data?.account.toLowerCase() === address?.toLowerCase() && !session.isError) return showEligibility ? <EligibilityAccess blocking={trading}>{children}</EligibilityAccess> : <>{children}</>;
   return (
     <Card style={styles.card}>
       <View style={styles.head}>

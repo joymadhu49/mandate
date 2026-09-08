@@ -55,9 +55,13 @@ async function requestSignature(method: string, params: unknown[]) {
   } catch (error) { throw walletError(error); }
 }
 export const signInMessage = (address: Address, message: string) => requestSignature('personal_sign', [toHex(message), address]);
-export const signTypedData = (address: Address, data: object) => requestSignature('eth_signTypedData_v4', [address, JSON.stringify(data)]);
+export const signTypedData = async (address: Address, data: object) => {
+  await (await import('./api')).api.assertEligibility();
+  return requestSignature('eth_signTypedData_v4', [address, JSON.stringify(data)]);
+};
 export interface WalletTransaction { to: Address; data: `0x${string}`; value: `0x${string}` }
 export async function sendTransaction(address: Address, tx: WalletTransaction): Promise<`0x${string}`> {
+  await (await import('./api')).api.assertEligibility();
   const provider = getProvider();
   const accounts = await provider.request({ method: 'eth_accounts' });
   if (!Array.isArray(accounts) || !accounts.some(account => typeof account === 'string' && account.toLowerCase() === address.toLowerCase())) {

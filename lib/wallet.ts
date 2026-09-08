@@ -70,6 +70,7 @@ export async function signInMessage(address: Address, message: string): Promise<
 }
 
 export async function signTypedData(address: Address, typedData: object): Promise<`0x${string}`> {
+  await (await import('./api')).api.assertEligibility();
   try { return (await provider.request({
     method: 'eth_signTypedData_v4',
     params: [address, JSON.stringify(typedData)],
@@ -90,6 +91,7 @@ const USER_REJECTED = 4001;
  * status needs `wallet_getCallsStatus`, which MWPClient does not forward at all, so it would leave us unable to find the receipt.
  */
 export async function sendTransaction(address: Address, tx: WalletTransaction): Promise<`0x${string}`> {
+  await (await import('./api')).api.assertEligibility();
   let hash: unknown;
   try {
     hash = await provider.request({ method: 'eth_sendTransaction', params: [{ from: address, to: tx.to, data: tx.data, value: tx.value }] });
