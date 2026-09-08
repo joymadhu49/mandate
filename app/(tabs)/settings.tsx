@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Alert, StyleSheet, Switch, View } from 'react-native';
+import { StyleSheet, Switch, View } from 'react-native';
+import { Alert } from '@/lib/browser-dialogs';
 import { useIsFocused, useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Banner, ConfirmSheet, DetailRow, Icon, Page, PreviewBanner, SectionHeader, SettingRow, appStyles } from '@/components/app-ui';

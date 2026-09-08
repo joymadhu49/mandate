@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
-import { Alert, RefreshControl, Share, StyleSheet, TextInput, View } from 'react-native';
+import { RefreshControl, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, Share } from '@/lib/browser-dialogs';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { Banner, CoinbaseLogo, Field, ListRow, Page, PreviewBanner, SectionHeader, SettingRow, appStyles } from '@/components/app-ui';
 import { usePullToRefresh } from '@/components/account-feed';

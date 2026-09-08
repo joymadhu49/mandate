@@ -28,7 +28,8 @@
   "assets": {
     "directory": "cloud-assets",
     "binding": "ASSETS",
-    "run_worker_first": true
+    "run_worker_first": true,
+    "html_handling": "none"
   },
   "vars": {
     "CLOUDFLARE_WORKER": "1",

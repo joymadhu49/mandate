@@ -2,9 +2,8 @@
 // one composer, and a native controls sheet. Every trade is a proposal until the owner
 // reviews it in the confirm sheet; nothing here places an order on its own.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator, Alert, FlatList, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, TextInput, View, useWindowDimensions,
-} from 'react-native';
+import { ActivityIndicator, FlatList, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, TextInput, View, useWindowDimensions } from 'react-native';
+import { Alert } from '@/lib/browser-dialogs';
 import { randomUUID } from 'expo-crypto';
 import { useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';

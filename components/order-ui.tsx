@@ -1,7 +1,8 @@
 // One rendering of an Order everywhere: status badge, amount, list row, cancel action.
 // The Orders tab, Order detail and the Agent thread compose these.
 import React from 'react';
-import { Alert, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Alert } from '@/lib/browser-dialogs';
 import { useRouter } from 'expo-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Badge, Button, Logo, Muted } from './ui';

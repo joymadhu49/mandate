@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import type { Address } from './stocks';
 import type { PeriodKey, PermissionDetails, SpendPermissionBatch } from './spendPermission';
 import { sessionToken, saveSession, clearSession, invalidateSession } from './session';
@@ -84,6 +85,7 @@ export class APIError extends Error { constructor(message: string, public status
 export const DEFAULT_BACKEND_URL: string = process.env.EXPO_PUBLIC_AGENT_API_URL ?? 'http://localhost:8842';
 /** The address requests use right now: the saved override, else the build default. Read at call time, never cached. */
 export function backendUrl() {
+  if (Platform.OS === 'web') return `${window.location.origin}/api`;
   return usePreferences.getState().backendUrl?.trim() || DEFAULT_BACKEND_URL;
 }
 const FULL_ADDRESS = 'Enter a full address, like https://agent.example.com or http://192.168.0.12:8842.';
@@ -163,6 +165,7 @@ export const api = {
     await saveSession({ ...session, backend: backendUrl() });
   },
   logout: async () => {
+    if (Platform.OS === 'web') { await clearSession(); return; }
     const token = await sessionToken(backendUrl());
     await clearSession();
     if (token) void req('/auth/logout', { method: 'POST', headers: { authorization: `Bearer ${token}` } }).catch(() => {});

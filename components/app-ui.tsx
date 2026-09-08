@@ -1,20 +1,16 @@
 // App-level building blocks composed from the primitives in ./ui.
 // Page chrome, list rows, banners, the budget meter, fields, and the confirm sheet.
-import React, { useEffect, useState, type ComponentProps } from 'react';
-import { Image, Modal, Pressable, ScrollView, StyleSheet, View, type ScrollViewProps, type ViewProps } from 'react-native';
-import { SymbolView } from 'expo-symbols';
+import React, { useEffect, useState } from 'react';
+import { Image, Modal, Platform, Pressable, ScrollView, StyleSheet, View, type ScrollViewProps, type ViewProps } from 'react-native';
+import { WebSheetFrame } from './web-sheet-frame';
+import { Icon, type IconName } from './icon';
+export { Icon, type IconName } from './icon';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, inset, money, radius, space, tabBarClearance, toneColor, toneSurface, type Tone } from '@/lib/theme';
 import { budgetProgress, modeLabel, periodNoun, resetsLabel, type PeriodKey } from '@/lib/ui-presentation';
 import { useWallet } from '@/lib/wallet';
 import { Body, Button, Caption, H1, H2, Mono, Muted, ProgressBar, Skeleton } from './ui';
 
-export type IconName = ComponentProps<typeof SymbolView>['name'];
-type IconWeight = ComponentProps<typeof SymbolView>['weight'];
-
-export function Icon({ name, size = 22, color = colors.muted, weight }: { name: IconName; size?: number; color?: string; weight?: IconWeight }) {
-  return <SymbolView name={name} size={size} tintColor={color} weight={weight} style={{ width: size, height: size }} />;
-}
 export function BrandMark({ size = 44 }: { size?: number }) {
   return (
     <Image accessibilityLabel="Mandate logo" source={require('@/assets/mandate-icon.png')}
@@ -325,6 +321,11 @@ export function Sheet({ visible, onClose, title, subtitle, children, footer, clo
   // A wallet review already lives in a stack modal. Render within it so an
   // ASWebAuthenticationSession never competes with a second presented modal.
   if (inline) return visible ? content : null;
+  if (Platform.OS === 'web') return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <WebSheetFrame>{content}</WebSheetFrame>
+    </Modal>
+  );
   return <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>{content}</Modal>;
 }
 

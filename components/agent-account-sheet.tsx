@@ -2,7 +2,8 @@
 // mid-trade, but it pays every network fee itself, so it needs a little ETH on Base before live orders can execute.
 // The fee helpers live here so Settings and the Home checklist agree on one threshold and one wording.
 import React from 'react';
-import { Alert, Share, StyleSheet } from 'react-native';
+import { StyleSheet } from 'react-native';
+import { Alert, Share } from '@/lib/browser-dialogs';
 import { useQuery } from '@tanstack/react-query';
 import { fetchEthBalance } from '@/lib/chain';
 import type { Address } from '@/lib/stocks';

@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { timingSafeEqual, createHash } from 'node:crypto';
+import { browserAPI, wantsWebApp } from './browser-api.js';
 import { app } from './app.js';
 import { withRuntime, type RuntimeStore } from './runtime.js';
 import { importSnapshot } from './migration.js';
@@ -10,6 +11,7 @@ interface Env {
   LEDGER: DurableObjectNamespace<MandateLedger>;
   ASSETS: Fetcher;
   SCHEDULER_ENABLED: string;
+  PUBLIC_URL: string;
   MIGRATION_TOKEN?: string;
 }
 const LEDGER_NAME = 'mandate-production-v1';
@@ -137,12 +139,27 @@ export class MandateLedger extends DurableObject<Env> {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const path = new URL(request.url).pathname;
-    if (path.startsWith('/demo/') && ['GET', 'HEAD'].includes(request.method)) return env.ASSETS.fetch(request);
+    if (['GET', 'HEAD'].includes(request.method) && (path.startsWith('/demo/') || path.startsWith('/assets/') || path.startsWith('/_expo/') || path === '/favicon.ico')) return env.ASSETS.fetch(request);
+    if (wantsWebApp(request)) {
+      const url = new URL(request.url); url.pathname = '/index.html'; url.search = '';
+      const asset = await env.ASSETS.fetch(new Request(url, { method: request.method }));
+      const result = new Response(asset.body, asset);
+      result.headers.set('cache-control', 'no-cache');
+      result.headers.set('x-frame-options', 'DENY');
+      result.headers.set('x-content-type-options', 'nosniff');
+      result.headers.set('referrer-policy', 'strict-origin-when-cross-origin');
+      result.headers.set('x-mandate-host', 'cloudflare');
+      return result;
+    }
     try {
       const headers = new Headers(request.headers);
       // Only Cloudflare's transport value is trusted; discard any caller-supplied internal header.
       headers.set('x-mandate-client-ip', request.headers.get('cf-connecting-ip') ?? 'unknown');
-      const response = await env.LEDGER.getByName(LEDGER_NAME).handle(new Request(request, { headers }));
+      const forwarded = new Request(request, { headers });
+      const ledger = env.LEDGER.getByName(LEDGER_NAME);
+      const response = path === '/api' || path.startsWith('/api/')
+        ? await browserAPI(forwarded, new URL(env.PUBLIC_URL).origin, req => ledger.handle(req))
+        : await ledger.handle(forwarded);
       const result = new Response(response.body, response);
       result.headers.set('x-mandate-host', 'cloudflare');
       result.headers.set('cache-control', 'no-store');

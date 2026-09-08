@@ -2,9 +2,9 @@
 
 **Give your agent a budget, not your keys.**
 
-Mandate is a native iPhone app for Coinbase Tokenized Stocks on Base. Connect a Coinbase wallet, set a USDC budget, choose stocks and trading rules, then confirm trades in chat or authorize automatic execution.
+Mandate is an iPhone and web app for Coinbase Tokenized Stocks on Base. Connect a Coinbase wallet, set a USDC budget, choose stocks and trading rules, then confirm trades in chat or authorize automatic execution.
 
-Built for the Base Builder Quest. [Project website](https://mandate.horizonbase.app) · [Source](https://github.com/joymadhu49/mandate)
+Built for the Base Builder Quest. [Open web app](https://mandate.horizonbase.app) · [iPhone TestFlight](https://testflight.apple.com/join/xNpkKz9g) · [Source](https://github.com/joymadhu49/mandate)
 
 ## How it works
 
@@ -21,8 +21,9 @@ USDC allowance, period, expiry and authorized spender are enforced onchain. Stoc
 | Component | Implementation |
 | --- | --- |
 | iPhone app | Expo SDK 57, React Native 0.86, Expo Router, TypeScript |
-| Wallet | Coinbase Base Account through Mobile Wallet Protocol |
-| Authentication | Single-use wallet challenge, server session, device SecureStore |
+| Web app | Expo Web in the same phone layout, hosted on Cloudflare |
+| Wallet | Coinbase Base Account through Mobile Wallet Protocol on iPhone and Base Account SDK on web |
+| Authentication | Single-use wallet challenge, durable server session, SecureStore on iPhone and HttpOnly cookie on web |
 | API | Hono, deployed on Cloudflare Workers |
 | Persistence | SQLite Durable Object with persistent sessions and trading state |
 | Scheduling | Durable alarms with a cron watchdog |
@@ -66,6 +67,10 @@ npm run cloud:check --prefix agent
 ```
 
 Backend unit tests use temporary state and mocked providers. The cloud check generates Worker types, typechecks and bundles a deployment dry run. It does not deploy. Operator scripts under `agent/cloud-scripts/` are separate, manually invoked checks; some contact the configured production service and use private local operator files.
+
+## Local web preview
+
+Run `npm run web` and open http://localhost:8082. The phone layout stays centered on a black background, with a compact link to the iPhone TestFlight app. This preview connects to the existing hosted agent and displays its actual execution mode. See [web setup](web/README.md).
 
 ## Cloudflare deployment
 

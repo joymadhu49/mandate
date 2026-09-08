@@ -6,6 +6,7 @@ import {
   Easing,
   Image,
   Pressable,
+  Platform,
   StyleSheet,
   Text,
   TextProps,
@@ -210,8 +211,8 @@ export function Skeleton({ width = '100%', height = 16, radius: r = 6, style }: 
   const pulse = useRef(new Animated.Value(0.5)).current;
   useEffect(() => {
     const loop = Animated.loop(Animated.sequence([
-      Animated.timing(pulse, { toValue: 1, duration: 700, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-      Animated.timing(pulse, { toValue: 0.5, duration: 700, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+      Animated.timing(pulse, { toValue: 1, duration: 700, easing: Easing.inOut(Easing.quad), useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(pulse, { toValue: 0.5, duration: 700, easing: Easing.inOut(Easing.quad), useNativeDriver: Platform.OS !== 'web' }),
     ]));
     loop.start();
     return () => loop.stop();

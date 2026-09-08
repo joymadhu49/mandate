@@ -5,7 +5,8 @@
 // A chat mandate signs the USDC budget only; each stock's sell permission is signed on its first sell
 // (see app/(tabs)/agent.tsx). An automatic mandate must exit positions unattended, so it signs every stock now.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, TextInput, View, useWindowDimensions } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, TextInput, View, useWindowDimensions } from 'react-native';
+import { Alert } from '@/lib/browser-dialogs';
 import { Stack, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMutation, useQuery, useQueryClient, type UseMutationResult, type UseQueryResult } from '@tanstack/react-query';

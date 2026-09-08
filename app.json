@@ -29,7 +29,12 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "output": "single",
+      "name": "Mandate",
+      "shortName": "Mandate",
+      "themeColor": "#0A0A0F",
+      "backgroundColor": "#0A0A0F"
     },
     "plugins": [
       "expo-router",

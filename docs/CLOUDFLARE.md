@@ -1,12 +1,12 @@
 # Cloudflare hosting
 
-Mandate's API runs on Cloudflare Workers at `https://mandate.horizonbase.app`. The iOS app keeps its existing backend URL. A Cloudflare Tunnel formerly forwarded this hostname to port 8842 on Joy's Mac; the Worker now answers the entire hostname route without fetching the tunnel origin.
+Mandate's web app and API run on Cloudflare Workers at `https://mandate.horizonbase.app`. The iOS app keeps its existing backend URL. A Cloudflare Tunnel formerly forwarded this hostname to port 8842 on Joy's Mac; the Worker now answers the entire hostname route without fetching the tunnel origin.
 
 ## Components
 
 - Worker: `mandate-agent`, configured in `agent/wrangler.jsonc`.
 - Durable Object: `MandateLedger`, named `mandate-production-v1`, backed by SQLite.
-- Static assets: the physical-device App Review recording at `/demo/mandate-build13-demo.mp4`.
+- Static assets: the Expo web app, plus the physical-device App Review recording at `/demo/mandate-build13-demo.mp4`.
 - Durable alarms: pending activations, requested evaluations, automatic mandates and queued orders. A minute cron repairs missing alarms; active chat mandates need no idle polling.
 - Base RPC: Alchemy public primary, PublicNode fallback, with bounded timeouts and no background endpoint ranking. Base, PublicNode and dRPC public endpoints rate limited cloud-origin requests during deployment checks. Alchemy passed direct and batched reads from the deployed Worker. Public RPC still has shared limits; configure a dedicated authenticated endpoint as a Worker secret before scaling. Endpoint reference: https://www.alchemy.com/rpc/base.
 - Worker secrets: the existing `AGENT_PRIVATE_KEY`, `OPENROUTER_API_KEY`, `AI_CREDENTIALS_KEY`, `LIFI_API_KEY`, and operator `OWNER_ACCOUNTS`.
@@ -23,9 +23,12 @@ Wallet sessions survive worker eviction/redeployment. Existing sessions from the
 
 ## Deployment
 
-Use the repository's npm tooling in `agent/`:
+Use the repository's npm tooling, starting from the repository root:
 
 ```sh
+npm ci
+npm run web:cloud
+cd agent
 npm ci
 npm run cloud:check
 npm run typecheck
@@ -33,7 +36,7 @@ npm test
 npm run cloud:deploy
 ```
 
-The empty `agent/cloud-assets/` directory is included for a fresh-clone dry run. Before deploying the existing production service, stage the existing public recording under `agent/cloud-assets/demo/mandate-build13-demo.mp4`. This directory and recordings are gitignored; deploy assets only from this explicit staging directory. Never put `.env`, runtime data or secret inputs there.
+The `web:cloud` command stages the generated browser app in `agent/cloud-assets/`. Before deploying the existing production service from a fresh clone, also stage the existing public recording under `agent/cloud-assets/demo/mandate-build13-demo.mp4`. The web build preserves that recording. Generated files and recordings are gitignored; deploy assets only from this explicit staging directory. Never put `.env`, runtime data or secret inputs there.
 
 The existing hosted deployment already has its secrets. A fresh deployment must configure its own secrets and initialize the ledger through the guarded import path before the API becomes available. Change the account ID, worker name and route to your own infrastructure first. Never reuse the hosted signing root for an independent executor. Use `wrangler secret put NAME` or a protected JSON file with `wrangler secret bulk`; never put values in source or CLI arguments. `.dev.vars` is local test configuration only and must use a separate unfunded signer and simulation data.
 
@@ -67,3 +70,12 @@ The Mandate Partner Portal integration is `mandate`, with surface URL `https://m
 Anonymous LI.FI calls initially returned HTTP 429 from Cloudflare because public quotas are per source IP. The Partner Portal key changes the quota to per key: https://help.li.fi/hc/en-us/articles/12111455848859-What-is-the-LI-FI-API-rate-limit. After adding the secret, a read-only quote passed from the deployed Worker in 1.27 seconds.
 
 From `agent/`, use `node cloud-scripts/check-session.mjs` and `node cloud-scripts/check-quotes.mjs` to check the existing unfunded smoke session, AI research, Base RPC and LI.FI. The quote check never signs or broadcasts the returned transaction. Use `cloud-scripts/verify-deployment.mjs` to generate a fresh unfunded session if needed; that script checks signer continuity against the protected local signing root.
+
+
+## Browser app and route compatibility
+
+Run `npm run web:cloud` from the root before `npm run cloud:deploy` in `agent/`. This builds Expo Web and stages only generated web files into `agent/cloud-assets`, preserving the existing App Review recording. The build keeps the Base app verification meta tag. Generated assets are ignored by Git.
+
+HTML navigation to app routes serves the phone UI; native requests with JSON content type continue to reach the same backend paths. Browser calls use `/api/*`. They are forwarded to the existing named Durable Object directly, without another HTTP hop or ledger. The static asset binding disables automatic HTML redirects because the Worker explicitly selects the SPA document. Unknown API routes never fall back to HTML.
+
+Browser verification sets a Secure, HttpOnly, SameSite=Strict, host-only cookie. Its token is verified against the existing hashed durable sessions, so Worker eviction or redeployment does not lose authentication. The browser JSON response contains only a nonsecret marker. Cross origin writes, caller-supplied bearer credentials and internal migration paths are rejected by the browser adapter. The native bearer transport remains unchanged. Deployment smoke tests use an ephemeral unfunded wallet and never authorize spending or broadcast a transaction.

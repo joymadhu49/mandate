@@ -5,6 +5,8 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useWallet } from '@/lib/wallet';
+import { WebNavigationHeader } from '@/components/web-navigation-header';
+import { AppFrame } from '@/components/app-frame';
 import { colors } from '@/lib/theme';
 import { usePreferences } from '@/lib/preferences';
 import { onSessionInvalidated } from '@/lib/session';
@@ -30,13 +32,15 @@ export default function RootLayout() {
     const listener = AppState.addEventListener('change', state => focusManager.setFocused(state === 'active'));
     return () => listener.remove();
   }, []);
-  if (!hydrated) return <View style={{ flex: 1, backgroundColor: colors.bg, justifyContent: 'center' }}><ActivityIndicator color={colors.link} /></View>;
+  if (!hydrated) return <AppFrame><View style={{ flex: 1, backgroundColor: colors.bg, justifyContent: 'center' }}><ActivityIndicator color={colors.link} /></View></AppFrame>;
 
   return (
     <QueryClientProvider client={queryClient}>
+      <AppFrame>
       <StatusBar style="light" />
       <Stack
         screenOptions={{
+          header: Platform.OS === 'web' ? props => <WebNavigationHeader {...props} /> : undefined,
           headerStyle: { backgroundColor: colors.bg },
           headerTintColor: colors.text,
           headerShadowVisible: false,
@@ -55,6 +59,7 @@ export default function RootLayout() {
           <Stack.Screen name="order/[id]" options={{ title: 'Order', headerTitle: '' }} />
         </Stack.Protected>
       </Stack>
+      </AppFrame>
     </QueryClientProvider>
   );
 }
