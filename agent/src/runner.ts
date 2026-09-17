@@ -198,6 +198,38 @@ async function swap(fromToken: `0x${string}`, toToken: `0x${string}`, amount: bi
   return { hash, received, tool: q.tool };
 }
 
+/** A live order that failed after moving funds leaves them on the agent account; they are the owner's. */
+export const needsReturn = (o: Order) => !o.dryRun && o.status === 'failed'
+  && !!o.transactions?.some(step => step.status === 'confirmed')
+  && !o.transactions.some(step => step.name === 'return' && step.status === 'confirmed');
+
+/**
+ * The agent account is a conduit, never a vault. Anything it still holds after a failed live order goes
+ * back to the owner's wallet. Sweeping the whole balance is safe because every token on this account
+ * belongs to that one owner, and returning funds is the right direction even if a prepared transaction
+ * lands later. Never throws: a failed return must not mask the failure that stranded the funds.
+ */
+export async function returnStrandedFunds(m: Mandate, order: Order) {
+  if (order.dryRun || config.dryRun) return;
+  const agent = spenderFor(m.account);
+  // Keep the canonical addresses; a buy strands USDC, a sell strands the stock, and a failure can strand either.
+  const tokens = order.token.toLowerCase() === USDC.toLowerCase() ? [USDC] : [USDC, order.token];
+  for (const token of tokens) {
+    try {
+      const balance = await publicClient.readContract({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [agent.address] });
+      if (balance <= 0n) continue;
+      await sendTx(token, encode({ abi: erc20Abi, functionName: 'transfer', args: [m.account, balance] }), 0n, recorder(order, 'return'), agent);
+      const symbol = token.toLowerCase() === USDC.toLowerCase() ? 'USDC' : stockByToken(token)?.symbol ?? order.symbol;
+      log({ mandateId: m.id, account: m.account, kind: 'error', symbol, rationale: `Returned ${symbol} left on the agent account to your wallet after the failed order.` });
+    } catch (error) {
+      console.error('stranded_return_failed', error instanceof Error ? error.message.split('\n')[0].slice(0, 160) : 'unknown');
+      const message = error instanceof Error ? error.message : String(error);
+      log({ mandateId: m.id, account: m.account, kind: 'error', symbol: order.symbol,
+        rationale: NO_FEES.test(message) ? noFeesMessage(m) : 'Funds left on the agent account could not be returned yet. This is retried automatically.' });
+    }
+  }
+}
+
 async function sendToUser(m: Mandate, token: `0x${string}`, amount: bigint, order: Order) {
   const before = await publicClient.readContract({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [m.account] });
   const hash = await sendTx(token, encode({ abi: erc20Abi, functionName: 'transfer', args: [m.account, amount] }), 0n, recorder(order, 'delivery'), spenderFor(m.account));
@@ -397,6 +429,7 @@ export async function executeOrder(order: Order) {
     order.error = orderFailure(m, order, error);
     if (!config.dryRun && submitted) m.status = 'error'; // Quarantine uncertain/partial trades only.
     log({ mandateId: m.id, account: m.account, kind: 'error', symbol: order.symbol, rationale: order.error });
+    if (needsReturn(order)) await returnStrandedFunds(m, order);
   } finally {
     order.updatedAt = now(); running.delete(m.id); save();
   }
@@ -456,7 +489,12 @@ export function startScheduler() {
   setInterval(async () => {
     if (processing) return;
     processing = true;
-    try { for (const order of [...db.orders].reverse()) await executeOrder(order); }
+    try {
+      for (const order of [...db.orders].reverse()) await executeOrder(order);
+      const stranded = db.orders.find(needsReturn);
+      const owner = stranded && db.mandates.find(m => m.id === stranded.mandateId);
+      if (stranded && owner) await returnStrandedFunds(owner, stranded);
+    }
     catch { console.error('order_queue_failed'); }
     finally { processing = false; }
   }, 5000);

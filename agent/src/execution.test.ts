@@ -13,7 +13,7 @@ process.env.DB_PATH = join(directory, 'db.json');
 const { config } = await import('./config.js');
 const { db, DatabaseSchema } = await import('./db.js');
 const { publicClient, walletClient, sendTx, STOCKS, USDC, spenderFor } = await import('./chain.js');
-const { executeOrder, modeMatches, revokeMandate, recoverInterruptedExecutions } = await import('./runner.js');
+const { executeOrder, modeMatches, needsReturn, returnStrandedFunds, revokeMandate, recoverInterruptedExecutions } = await import('./runner.js');
 const { decide } = await import('./brain.js');
 const { setAISettings, resetAISettings } = await import('./openrouter.js');
 const { quoteSwap, LIFI_BASE_DIAMOND } = await import('./lifi.js');
@@ -122,12 +122,36 @@ test('execution safety regressions without network or signing real transactions'
     await revokeMandate(m); await revokeMandate(m); mock.mock.restore();
     assert.equal(m.status, 'revoked'); assert.equal(submitted, 0);
   });
+  await t.test('funds pulled for an order that never swapped are returned to the owner', async () => {
+    // Today's failure: the pull confirmed, the swap approval was never broadcast, and a dollar sat on the agent account.
+    reset(); config.dryRun = false; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false;
+    db.mandates.push(m); db.orders.push(o);
+    revertAt = 2; // the pull confirms, the swap does not
+    const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(quoteResponse()));
+    await executeOrder(o); mock.mock.restore();
+    assert.equal(o.status, 'failed'); assert.equal(db.positions.length, 0);
+    assert.ok(o.transactions?.some(step => step.name === 'return' && step.status === 'confirmed'), 'stranded funds were returned');
+    assert.equal(needsReturn(o), false);
+  });
+  await t.test('a return that could not be sent stays pending so the scheduler retries it', async () => {
+    reset(); config.dryRun = false; const m = mandate(); const o = order(); o.dryRun = false; o.status = 'failed';
+    o.transactions = [{ name: 'pull', hash: `0x${'2'.repeat(64)}`, status: 'confirmed', updatedAt: ts }];
+    db.mandates.push(m); db.orders.push(o);
+    assert.equal(needsReturn(o), true);
+    reverted = true; await returnStrandedFunds(m, o); reverted = false;
+    assert.equal(needsReturn(o), true, 'still owed, so the next pass tries again');
+    await returnStrandedFunds(m, o);
+    assert.equal(needsReturn(o), false);
+  });
   await t.test('failed final delivery never records a filled order or user position', async () => {
     reset(); config.dryRun = false; revertAt = 3; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false; db.mandates.push(m); db.orders.push(o);
     const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(quoteResponse()));
     await executeOrder(o); mock.mock.restore();
     assert.equal(o.status, 'failed'); assert.equal(m.status, 'error'); assert.equal(db.positions.length, 0);
-    assert.deepEqual(o.transactions?.map(step => [step.name, step.status]), [['pull', 'confirmed'], ['swap', 'confirmed'], ['delivery', 'failed']]);
+    // Undelivered tokens are not left on the agent account; both balances the fixture reports go back to the owner.
+    assert.deepEqual(o.transactions?.map(step => [step.name, step.status]),
+      [['pull', 'confirmed'], ['swap', 'confirmed'], ['delivery', 'failed'], ['return', 'confirmed'], ['return', 'confirmed']]);
+    assert.equal(needsReturn(o), false);
   });
   await t.test('confirmed live steps produce a position only after verified delivery', async () => {
     reset(); config.dryRun = false; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false; db.mandates.push(m); db.orders.push(o);
@@ -140,7 +164,10 @@ test('execution safety regressions without network or signing real transactions'
     reset(); config.dryRun = false; zeroOutput = true; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false; db.mandates.push(m); db.orders.push(o);
     const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(quoteResponse()));
     await executeOrder(o); mock.mock.restore();
-    assert.equal(o.status, 'failed'); assert.equal(m.status, 'error'); assert.equal(submitted, 2); assert.equal(db.positions.length, 0);
+    assert.equal(o.status, 'failed'); assert.equal(m.status, 'error'); assert.equal(db.positions.length, 0);
+    // Pull and swap only: nothing is delivered as a purchase, and the third submission returns what the agent still held.
+    assert.deepEqual(o.transactions?.map(step => step.name), ['pull', 'swap', 'return']);
+    assert.equal(submitted, 3);
   });
   await t.test('restart preserves transaction hashes and quarantines interrupted live execution', () => {
     reset(); config.dryRun = false; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false; o.status = 'executing';

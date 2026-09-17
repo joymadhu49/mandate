@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { eligibility } from './eligibility.js';
 import { db } from './db.js';
 import { config } from './config.js';
-import { executeOrder, modeMatches, runMandate } from './runner.js';
+import { executeOrder, modeMatches, needsReturn, returnStrandedFunds, runMandate } from './runner.js';
 import { atomicWriteJson, loadValidatedJson } from './persistence.js';
 
 const Schedule = z.record(z.number());
@@ -17,6 +17,12 @@ export function requestEvaluation(id: string) {
 
 /** One item per alarm bounds execution duration. Existing journals/idempotence guard retries. */
 export async function schedulerStep() {
+  // Returning stranded funds outranks starting new trades: the owner's money never waits behind a queue.
+  const stranded = db.orders.find(needsReturn);
+  if (stranded) {
+    const m = db.mandates.find(item => item.id === stranded.mandateId);
+    if (m) { await returnStrandedFunds(m, stranded); return; }
+  }
   const order = [...db.orders].reverse().find(o => o.status === 'queued' && o.executeAfter * 1000 <= Date.now());
   if (order) { await executeOrder(order); return; }
   const schedule = loadValidatedJson(schedulePath, Schedule, {});
@@ -31,6 +37,7 @@ export async function schedulerStep() {
 export function nextScheduledAt(): number | null {
   const schedule = loadValidatedJson(schedulePath, Schedule, {});
   const due = [
+    ...(db.orders.some(needsReturn) ? [Date.now()] : []),
     ...db.orders.filter(o => o.status === 'queued').map(o => o.executeAfter * 1000),
     ...eligible(schedule).map(m => schedule[m.id] ?? Date.now()),
   ];
