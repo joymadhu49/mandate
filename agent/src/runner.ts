@@ -19,6 +19,7 @@ import {
   spenderFor,
   spentThisPeriod,
   stockByToken,
+  awaitObservable,
   tokenDecimals,
   type Quote,
 } from './chain.js';
@@ -198,7 +199,12 @@ async function swap(fromToken: `0x${string}`, toToken: `0x${string}`, amount: bi
   const allowance = await publicClient.readContract({ address: fromToken, abi: erc20Abi, functionName: 'allowance', args: [from.address, q.approvalAddress] });
   if (allowance < amount) {
     await sendTx(fromToken, encode({ abi: erc20Abi, functionName: 'approve', args: [q.approvalAddress, amount] }), 0n, recorder(order, 'swap-approval'), from, () => eligibility.assert(order.account));
+    await awaitObservable('The swap approval', async () =>
+      await publicClient.readContract({ address: fromToken, abi: erc20Abi, functionName: 'allowance', args: [from.address, q.approvalAddress] }) >= amount);
   }
+  // The swap is simulated before it is signed, so the pulled funds must be readable too.
+  await awaitObservable('The transferred amount', async () =>
+    await publicClient.readContract({ address: fromToken, abi: erc20Abi, functionName: 'balanceOf', args: [from.address] }) >= amount);
   const before = await publicClient.readContract({ address: toToken, abi: erc20Abi, functionName: 'balanceOf', args: [from.address] });
   if (Date.now() >= q.expiresAt) throw new Error('Swap quote expired. Reconciliation is required.');
   const hash = await sendTx(q.to, q.data, q.value, recorder(order, 'swap'), from, () => eligibility.assert(order.account));

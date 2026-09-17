@@ -36,6 +36,8 @@ test('execution safety regressions without network or signing real transactions'
   let revertAt = 0;
   let signedCount = 0;
   let zeroOutput = false;
+  let staleAllowanceReads = 0;
+  let extraSubmissions = 0; // an approval adds a transaction before the swap
   let fresh = true;
   let sentNonce = 1;
   t.mock.method(publicClient, 'getTransactionCount', async () => sentNonce++);
@@ -48,15 +50,15 @@ test('execution safety regressions without network or signing real transactions'
     if (args.functionName === 'decimals') return 18;
     if (args.functionName === 'getCurrentPeriod') return { spend: 0n };
     if (args.functionName === 'isValid') return true;
-    if (args.functionName === 'allowance') return 100000000000000000000n;
+    if (args.functionName === 'allowance') return staleAllowanceReads-- > 0 ? 0n : 100000000000000000000n;
     if (args.functionName === 'balanceOf') {
       if (args.address === USDC) return 100000000n;
       if (zeroOutput) return 0n;
-      return submitted >= (args.args[0] === agent.address ? 2 : 3) ? 100000000000000000n : 0n;
+      return submitted >= (args.args[0] === agent.address ? 2 : 3) + extraSubmissions ? 100000000000000000n : 0n;
     }
     throw new Error('Unexpected contract read');
   });
-  const reset = () => { db.mandates.length = db.orders.length = db.positions.length = db.activity.length = 0; submitted = 0; reverted = false; revertAt = 0; zeroOutput = false; fresh = true; config.dryRun = true; };
+  const reset = () => { db.mandates.length = db.orders.length = db.positions.length = db.activity.length = 0; submitted = 0; reverted = false; revertAt = 0; zeroOutput = false; fresh = true; staleAllowanceReads = 0; extraSubmissions = 0; config.dryRun = true; };
 
   await t.test('signed hash is recorded before broadcast and reverted receipts reject', async () => {
     const events: string[] = [];
@@ -124,6 +126,17 @@ test('execution safety regressions without network or signing real transactions'
     await revokeMandate(m); await revokeMandate(m); mock.mock.restore();
     assert.equal(m.status, 'revoked'); assert.equal(submitted, 0);
   });
+  await t.test('a swap waits for the approval to be readable instead of simulating against a stale replica', async () => {
+    // Without the wait the swap is estimated while the replica still reports allowance 0, and it
+    // reverts TRANSFER_FROM_FAILED before anything is signed.
+    reset(); config.dryRun = false; staleAllowanceReads = 2; extraSubmissions = 1;
+    const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false;
+    db.mandates.push(m); db.orders.push(o);
+    const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(quoteResponse()));
+    await executeOrder(o); mock.mock.restore();
+    assert.equal(staleAllowanceReads <= 0, true, 'the stale view was re-read rather than accepted');
+    assert.equal(o.status, 'filled');
+  });
   await t.test('a lagging replica cannot hand the next transaction a nonce already used', async () => {
     // The symptom this reproduces: a second transaction signed with the first one's nonce is rejected
     // before the mempool, so it never mines and the account nonce never advances.
@@ -131,7 +144,8 @@ test('execution safety regressions without network or signing real transactions'
     const nonces: (number | undefined)[] = [];
     const stale = t.mock.method(publicClient, 'getTransactionCount', async () => 5); // never catches up
     const prep = t.mock.method(walletClient, 'prepareTransactionRequest', async (r: { nonce?: number }) => { nonces.push(r.nonce); return {} as any; });
-    const agentAccount = spenderFor(owner);
+    // A wallet of its own, so no earlier test's assigned nonces are in play.
+    const agentAccount = spenderFor('0x00000000000000000000000000000000000000ff');
     await sendTx(USDC, '0x' as const, 0n, undefined, agentAccount);
     await sendTx(USDC, '0x' as const, 0n, undefined, agentAccount);
     await sendTx(USDC, '0x' as const, 0n, undefined, agentAccount);

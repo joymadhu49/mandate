@@ -218,4 +218,19 @@ export async function sendTx(to: Address, data: Hex, value = 0n, record?: (hash:
   } finally { release(); }
 }
 
+/**
+ * A confirmed receipt only proves that one replica has the block. The very next read can land on a
+ * replica that is still behind, and a step simulated against that stale view fails for state that
+ * already exists: a swap estimated before the approval is visible reverts with TRANSFER_FROM_FAILED.
+ * Wait for the state the next step depends on to actually be readable.
+ */
+export async function awaitObservable(what: string, check: () => Promise<boolean>, timeoutMs = 12_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (await check().catch(() => false)) return;
+    if (Date.now() >= deadline) throw new Error(`${what} is not visible on Base yet. Nothing further was submitted.`);
+    await new Promise(resolve => setTimeout(resolve, 1_000));
+  }
+}
+
 export const encode = encodeFunctionData;
