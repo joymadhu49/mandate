@@ -14,7 +14,9 @@ export class AIError extends Error {
 type Settings = { apiKey: string; model: string };
 let session: Settings | undefined;
 const credentials = new AICredentials(`${config.dbPath}.ai-credentials.json`);
-export const aiSettings = (account?: string): Settings => (account ? credentials.get(account) : undefined) ?? session ?? { apiKey: config.openrouterKey, model: config.model };
+// Saved per-wallet keys belong to the same development-backend feature that writes them: a production
+// backend rejects /ai/settings, so a wallet could never rotate or clear one it is pinned to.
+export const aiSettings = (account?: string): Settings => (account && devAIEnabled() ? credentials.get(account) : undefined) ?? session ?? { apiKey: config.openrouterKey, model: config.model };
 export const setAISettings = (settings: Settings, account?: string) => { if (account) credentials.set(account, settings); else session = settings; };
 export const resetAISettings = (account?: string) => { if (account) credentials.remove(account); else session = undefined; };
 // In-app key setup is a development-backend feature (DEV_AI_SETTINGS=1, non-production) in either execution mode.
@@ -22,7 +24,7 @@ export const devAIEnabled = () => config.devAiSettings;
 export const aiStatus = (account?: string) => ({
   configured: !!aiSettings(account).apiKey,
   model: aiSettings(account).model,
-  source: account && credentials.get(account) ? 'saved' : session ? 'session' : config.openrouterKey ? 'environment' : 'none',
+  source: account && devAIEnabled() && credentials.get(account) ? 'saved' : session ? 'session' : config.openrouterKey ? 'environment' : 'none',
   developmentSettings: devAIEnabled(),
 });
 

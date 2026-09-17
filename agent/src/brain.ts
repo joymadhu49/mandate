@@ -16,16 +16,17 @@ export const Decision = z.object({
 }).strict();
 export type Decision = z.infer<typeof Decision>;
 
+// Bounds here must mirror Decision (see chat.ts replySchema).
 const decisionSchema = {
   type: 'object', additionalProperties: false, required: ['actions', 'summary'],
   properties: {
-    summary: { type: 'string' },
-    actions: { type: 'array', items: { anyOf: [
+    summary: { type: 'string', maxLength: 400 },
+    actions: { type: 'array', maxItems: 4, items: { anyOf: [
       { type: 'object', additionalProperties: false, required: ['action', 'symbol', 'usd', 'rationale'], properties: {
-        action: { type: 'string', enum: ['buy'] }, symbol: { type: 'string' }, usd: { type: 'number' }, rationale: { type: 'string' },
+        action: { type: 'string', enum: ['buy'] }, symbol: { type: 'string', minLength: 1, maxLength: 16 }, usd: { type: 'number', exclusiveMinimum: 0 }, rationale: { type: 'string', minLength: 3, maxLength: 400 },
       } },
       { type: 'object', additionalProperties: false, required: ['action', 'symbol', 'fraction', 'rationale'], properties: {
-        action: { type: 'string', enum: ['sell'] }, symbol: { type: 'string' }, fraction: { type: 'number' }, rationale: { type: 'string' },
+        action: { type: 'string', enum: ['sell'] }, symbol: { type: 'string', minLength: 1, maxLength: 16 }, fraction: { type: 'number', exclusiveMinimum: 0, maximum: 1 }, rationale: { type: 'string', minLength: 3, maxLength: 400 },
       } },
     ] } },
   },
