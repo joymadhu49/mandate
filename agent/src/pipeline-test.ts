@@ -7,7 +7,7 @@ import { config } from './config.js';
 import { eligibility } from './eligibility.js';
 import { db, save, uid } from './db.js';
 import { USDC, balanceOf, ethBalance, ethUsdPrice, publicClient, sendTx, spenderFor } from './chain.js';
-import { NATIVE_TOKEN, quoteSwap, type SwapQuote } from './lifi.js';
+import { NATIVE_TOKEN, quoteSwap, type SwapQuote } from './swap.js';
 import type { Address, Hex } from './types.js';
 
 export const PIPELINE_TEST_MIN_USD = 0.5;

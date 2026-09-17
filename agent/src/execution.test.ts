@@ -17,12 +17,28 @@ const { executeOrder, modeMatches, needsReturn, returnStrandedFunds, revokeManda
 const { decide } = await import('./brain.js');
 const { setAISettings, resetAISettings } = await import('./openrouter.js');
 const { quoteSwap, LIFI_BASE_DIAMOND } = await import('./lifi.js');
+const { RELAY_APPROVAL_PROXY } = await import('./relay.js');
 const token = STOCKS[0].token;
 const owner = '0x0000000000000000000000000000000000000001' as const;
 const agent = spenderFor(owner);
 const ts = Math.floor(Date.now() / 1000);
 const mandate = (): Mandate => ({ id: 'm', executionMode: 'simulation', account: owner, spender: agent.address, budgetUsdc: 100, period: 'weekly', universe: [token], strategy: 'Hold', risk: 'balanced', maxPositionPct: 100, takeProfitPct: 10, stopLossPct: 7, createdAt: ts, status: 'active', batch: { account: owner, period: 604800, start: ts - 1000, end: ts + 604800, permissions: [{ spender: agent.address, token: USDC, allowance: '100000000', salt: '1', extraData: '0x' }, { spender: agent.address, token, allowance: '100000000000000000000', salt: '2', extraData: '0x' }] } });
 const order = (): Order => ({ id: 'o', mandateId: 'm', account: owner, action: 'buy', token, symbol: STOCKS[0].symbol, usd: 10, rationale: 'Fixture', status: 'queued', createdAt: ts - 61, executeAfter: ts - 1, updatedAt: ts, dryRun: true });
+/** What Relay returns for a same-chain ERC-20 swap: an approval step, then the swap. */
+function relayQuote(fromAmount = 10000000n) {
+  const pad = (hex: string) => hex.replace(/^0x/, '').toLowerCase().padStart(64, '0');
+  return {
+    steps: [
+      { id: 'approve', kind: 'transaction', items: [{ data: { from: agent.address, to: USDC, chainId: 8453, value: '0',
+        data: `0x095ea7b3${pad(RELAY_APPROVAL_PROXY)}${pad(fromAmount.toString(16))}` } }] },
+      { id: 'swap', kind: 'transaction', items: [{ data: { from: agent.address, to: RELAY_APPROVAL_PROXY, chainId: 8453, data: '0x1234', value: '0' } }] },
+    ],
+    details: {
+      currencyIn: { amount: fromAmount.toString(), currency: { address: USDC } },
+      currencyOut: { amount: '100000000000000000', minimumAmount: '90000000000000000', currency: { address: token } },
+    },
+  };
+}
 function quoteResponse() {
   return { transactionRequest: { from: agent.address, to: LIFI_BASE_DIAMOND, chainId: 8453, data: '0x1234', value: '0' }, action: { fromChainId: 8453, toChainId: 8453, fromAddress: agent.address, toAddress: agent.address, fromAmount: '10000000', fromToken: { address: USDC }, toToken: { address: token } }, estimate: { toAmount: '100000000000000000', toAmountMin: '90000000000000000', approvalAddress: LIFI_BASE_DIAMOND }, tool: 'fixture' };
 }
@@ -117,7 +133,7 @@ test('execution safety regressions without network or signing real transactions'
   });
   await t.test('reverted pull is durably journaled and quarantines mandate', async () => {
     reset(); config.dryRun = false; reverted = true; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false; db.mandates.push(m); db.orders.push(o);
-    const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(quoteResponse()));
+    const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(relayQuote()));
     await executeOrder(o); mock.mock.restore();
     assert.equal(o.status, 'failed'); assert.equal(m.status, 'error'); assert.equal(o.transactions?.[0].status, 'failed');
     assert.equal(JSON.parse(readFileSync(config.dbPath, 'utf8')).orders[0].transactions[0].status, 'failed');
@@ -133,7 +149,7 @@ test('execution safety regressions without network or signing real transactions'
     // still returned the pre-swap view, so the order was marked failed and no position recorded.
     reset(); config.dryRun = false; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false;
     db.mandates.push(m); db.orders.push(o);
-    const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(quoteResponse()));
+    const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(relayQuote()));
     staleBalanceReads = 2; // the pre-swap read, then the read straight after the swap, both lag
     await executeOrder(o); mock.mock.restore();
     assert.equal(o.status, 'filled');
@@ -145,7 +161,7 @@ test('execution safety regressions without network or signing real transactions'
     reset(); config.dryRun = false; staleAllowanceReads = 2; extraSubmissions = 1;
     const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false;
     db.mandates.push(m); db.orders.push(o);
-    const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(quoteResponse()));
+    const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(relayQuote()));
     await executeOrder(o); mock.mock.restore();
     assert.equal(staleAllowanceReads <= 0, true, 'the stale view was re-read rather than accepted');
     assert.equal(o.status, 'filled');
@@ -170,7 +186,7 @@ test('execution safety regressions without network or signing real transactions'
     reset(); config.dryRun = false; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false;
     db.mandates.push(m); db.orders.push(o);
     revertAt = 2; // the pull confirms, the swap does not
-    const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(quoteResponse()));
+    const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(relayQuote()));
     await executeOrder(o); mock.mock.restore();
     assert.equal(o.status, 'failed'); assert.equal(db.positions.length, 0);
     assert.ok(o.transactions?.some(step => step.name === 'return' && step.status === 'confirmed'), 'stranded funds were returned');
@@ -188,7 +204,7 @@ test('execution safety regressions without network or signing real transactions'
   });
   await t.test('failed final delivery never records a filled order or user position', async () => {
     reset(); config.dryRun = false; revertAt = 3; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false; db.mandates.push(m); db.orders.push(o);
-    const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(quoteResponse()));
+    const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(relayQuote()));
     await executeOrder(o); mock.mock.restore();
     assert.equal(o.status, 'failed'); assert.equal(m.status, 'error'); assert.equal(db.positions.length, 0);
     // Undelivered tokens are not left on the agent account; both balances the fixture reports go back to the owner.
@@ -198,14 +214,14 @@ test('execution safety regressions without network or signing real transactions'
   });
   await t.test('confirmed live steps produce a position only after verified delivery', async () => {
     reset(); config.dryRun = false; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false; db.mandates.push(m); db.orders.push(o);
-    const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(quoteResponse()));
+    const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(relayQuote()));
     await executeOrder(o); mock.mock.restore();
     assert.equal(o.status, 'filled'); assert.equal(m.status, 'active'); assert.equal(db.positions[0].executionMode, 'live'); assert.equal(db.positions[0].shares, 0.1);
     assert.deepEqual(o.transactions?.map(step => step.status), ['confirmed', 'confirmed', 'confirmed']);
   });
   await t.test('zero swap output is quarantined before transfer or accounting', async () => {
     reset(); config.dryRun = false; zeroOutput = true; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false; db.mandates.push(m); db.orders.push(o);
-    const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(quoteResponse()));
+    const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(relayQuote()));
     await executeOrder(o); mock.mock.restore();
     assert.equal(o.status, 'failed'); assert.equal(m.status, 'error'); assert.equal(db.positions.length, 0);
     // Pull and swap only: nothing is delivered as a purchase, and the third submission returns what the agent still held.

@@ -24,7 +24,7 @@ import {
   tokenDecimals,
   type Quote,
 } from './chain.js';
-import { quoteSwap, type SwapQuote } from './lifi.js';
+import { quoteSwap, type SwapQuote } from './swap.js';
 import { decide, riskExit, type MarketView } from './brain.js';
 import type { Mandate, PermissionDetails, Position, Order, TransactionStep } from './types.js';
 import { approvalRequests } from './permissions.js';
