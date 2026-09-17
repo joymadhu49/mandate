@@ -18,7 +18,8 @@ import { useWallet } from '@/lib/wallet';
 
 const LIVE_FAILURE_NOTE = ' Check your wallet on Base before another order. A partial transaction may still settle.';
 
-const failureText = (o: Order, hidden: boolean) => `${privateAccountText(o.error || 'Execution failed.', hidden)}${o.dryRun ? '' : LIVE_FAILURE_NOTE}`;
+// Only a broadcast order can settle partially; claiming otherwise contradicts a failure that moved no funds.
+const failureText = (o: Order, hidden: boolean) => `${privateAccountText(o.error || 'Execution failed.', hidden)}${!o.dryRun && o.transactions?.length ? LIVE_FAILURE_NOTE : ''}`;
 
 export default function OrderDetail() {
   return <Screen><AccountAccess><Detail /></AccountAccess></Screen>;

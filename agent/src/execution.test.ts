@@ -100,6 +100,15 @@ test('execution safety regressions without network or signing real transactions'
     reset(); config.dryRun = false; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false; db.mandates.push(m);
     await executeOrder(o); assert.equal(o.status, 'failed'); assert.equal(submitted, 0); assert.equal(m.status, 'active');
   });
+  await t.test('an unroutable stock names the reason instead of a generic check failure', async () => {
+    reset(); config.dryRun = false; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false; db.mandates.push(m);
+    // What LI.FI actually answers for a token it cannot route on Base.
+    const mock = t.mock.method(globalThis, 'fetch', async () => Response.json({ message: 'No available quotes for the requested transfer' }, { status: 404 }));
+    await executeOrder(o); mock.mock.restore();
+    assert.equal(o.status, 'failed'); assert.equal(submitted, 0); assert.equal(m.status, 'active');
+    assert.match(o.error ?? '', new RegExp(`No swap route is available for ${STOCKS[0].symbol}`));
+    assert.match(o.error ?? '', /No funds moved/);
+  });
   await t.test('reverted pull is durably journaled and quarantines mandate', async () => {
     reset(); config.dryRun = false; reverted = true; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false; db.mandates.push(m); db.orders.push(o);
     const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(quoteResponse()));

@@ -48,6 +48,16 @@ function activationFailure(m: Mandate, error: unknown): ActivationError {
   }
   return new ActivationError('Could not reach Base. Check the backend connection, then tap Retry activation.', error);
 }
+// A raw cause can carry RPC or router detail, so it is logged rather than shown. Name the causes an owner
+// can act on; anything else keeps the generic wording.
+const NO_ROUTE = /swap quote unavailable|swap provider is busy|swap quote does not match/i;
+function orderFailure(m: Mandate, order: Order, error: unknown): string {
+  if (order.transactions?.length) return 'Execution did not finish. Check the recorded transaction steps before attempting another trade.';
+  const message = error instanceof Error ? error.message : String(error);
+  if (NO_ROUTE.test(message)) return `No swap route is available for ${order.symbol} right now. No funds moved; try another stock or try again later.`;
+  if (NO_FEES.test(message)) return noFeesMessage(m);
+  return 'Order checks did not pass. No funds moved; the mandate will evaluate again.';
+}
 /** Refuse to prepare a registration the agent account cannot pay for, so the owner gets the funding message rather than a node error. */
 async function assertFees(m: Mandate) {
   let balance: bigint;
@@ -380,10 +390,11 @@ export async function executeOrder(order: Order) {
     }
     if (!result) throw new Error('The order amount is too small.');
     order.status = 'filled'; order.filledUsd = result.amountUsd; order.txHash = result.txHash;
-  } catch {
+  } catch (error) {
     order.status = 'failed';
     const submitted = !!order.transactions?.length;
-    order.error = submitted ? 'Execution did not finish. Check the recorded transaction steps before attempting another trade.' : 'Order checks did not pass. No funds moved; the mandate will evaluate again.';
+    console.error('order_execution_failed', error instanceof Error ? error.message.split('\n')[0].slice(0, 160) : 'unknown');
+    order.error = orderFailure(m, order, error);
     if (!config.dryRun && submitted) m.status = 'error'; // Quarantine uncertain/partial trades only.
     log({ mandateId: m.id, account: m.account, kind: 'error', symbol: order.symbol, rationale: order.error });
   } finally {
