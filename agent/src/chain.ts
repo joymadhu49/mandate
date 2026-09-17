@@ -233,4 +233,19 @@ export async function awaitObservable(what: string, check: () => Promise<boolean
   }
 }
 
+/**
+ * The same lag on the way back: a balance read taken straight after a confirmed transfer can still
+ * return the pre-transfer view, which reads as a swap that produced nothing or a delivery that never
+ * arrived. Poll until the expected increase is visible, then let the caller judge the result.
+ */
+export async function awaitBalanceIncrease(read: () => Promise<bigint>, before: bigint, minimum: bigint, timeoutMs = 12_000): Promise<bigint> {
+  const deadline = Date.now() + timeoutMs;
+  let latest = before;
+  for (;;) {
+    latest = await read().catch(() => latest);
+    if (latest - before >= minimum || Date.now() >= deadline) return latest - before;
+    await new Promise(resolve => setTimeout(resolve, 1_000));
+  }
+}
+
 export const encode = encodeFunctionData;

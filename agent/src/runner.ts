@@ -20,6 +20,7 @@ import {
   spentThisPeriod,
   stockByToken,
   awaitObservable,
+  awaitBalanceIncrease,
   tokenDecimals,
   type Quote,
 } from './chain.js';
@@ -208,8 +209,8 @@ async function swap(fromToken: `0x${string}`, toToken: `0x${string}`, amount: bi
   const before = await publicClient.readContract({ address: toToken, abi: erc20Abi, functionName: 'balanceOf', args: [from.address] });
   if (Date.now() >= q.expiresAt) throw new Error('Swap quote expired. Reconciliation is required.');
   const hash = await sendTx(q.to, q.data, q.value, recorder(order, 'swap'), from, () => eligibility.assert(order.account));
-  const after = await publicClient.readContract({ address: toToken, abi: erc20Abi, functionName: 'balanceOf', args: [from.address] });
-  const received = after - before;
+  const received = await awaitBalanceIncrease(
+    () => publicClient.readContract({ address: toToken, abi: erc20Abi, functionName: 'balanceOf', args: [from.address] }), before, q.toAmountMin);
   if (received <= 0n || received < q.toAmountMin) throw new Error('Swap output is below the minimum.');
   return { hash, received, tool: q.tool };
 }
@@ -249,8 +250,9 @@ export async function returnStrandedFunds(m: Mandate, order: Order) {
 async function sendToUser(m: Mandate, token: `0x${string}`, amount: bigint, order: Order) {
   const before = await publicClient.readContract({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [m.account] });
   const hash = await sendTx(token, encode({ abi: erc20Abi, functionName: 'transfer', args: [m.account, amount] }), 0n, recorder(order, 'delivery'), spenderFor(m.account));
-  const after = await publicClient.readContract({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [m.account] });
-  if (after - before < amount) throw new Error('Token delivery could not be verified.');
+  const delivered = await awaitBalanceIncrease(
+    () => publicClient.readContract({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [m.account] }), before, amount);
+  if (delivered < amount) throw new Error('Token delivery could not be verified.');
   return hash;
 }
 

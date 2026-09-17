@@ -38,6 +38,7 @@ test('execution safety regressions without network or signing real transactions'
   let zeroOutput = false;
   let staleAllowanceReads = 0;
   let extraSubmissions = 0; // an approval adds a transaction before the swap
+  let staleBalanceReads = 0; // reads that still return the pre-transfer view
   let fresh = true;
   let sentNonce = 1;
   t.mock.method(publicClient, 'getTransactionCount', async () => sentNonce++);
@@ -54,11 +55,12 @@ test('execution safety regressions without network or signing real transactions'
     if (args.functionName === 'balanceOf') {
       if (args.address === USDC) return 100000000n;
       if (zeroOutput) return 0n;
+      if (staleBalanceReads > 0) { staleBalanceReads--; return 0n; }
       return submitted >= (args.args[0] === agent.address ? 2 : 3) + extraSubmissions ? 100000000000000000n : 0n;
     }
     throw new Error('Unexpected contract read');
   });
-  const reset = () => { db.mandates.length = db.orders.length = db.positions.length = db.activity.length = 0; submitted = 0; reverted = false; revertAt = 0; zeroOutput = false; fresh = true; staleAllowanceReads = 0; extraSubmissions = 0; config.dryRun = true; };
+  const reset = () => { db.mandates.length = db.orders.length = db.positions.length = db.activity.length = 0; submitted = 0; reverted = false; revertAt = 0; zeroOutput = false; fresh = true; staleAllowanceReads = 0; extraSubmissions = 0; staleBalanceReads = 0; config.dryRun = true; };
 
   await t.test('signed hash is recorded before broadcast and reverted receipts reject', async () => {
     const events: string[] = [];
@@ -125,6 +127,17 @@ test('execution safety regressions without network or signing real transactions'
     const mock = t.mock.method(publicClient, 'readContract', async () => true as any);
     await revokeMandate(m); await revokeMandate(m); mock.mock.restore();
     assert.equal(m.status, 'revoked'); assert.equal(submitted, 0);
+  });
+  await t.test('a swap that lands is not called empty because the balance read lagged', async () => {
+    // The real failure: the swap confirmed and the tokens existed, but the read straight after it
+    // still returned the pre-swap view, so the order was marked failed and no position recorded.
+    reset(); config.dryRun = false; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false;
+    db.mandates.push(m); db.orders.push(o);
+    const mock = t.mock.method(globalThis, 'fetch', async () => Response.json(quoteResponse()));
+    staleBalanceReads = 2; // the pre-swap read, then the read straight after the swap, both lag
+    await executeOrder(o); mock.mock.restore();
+    assert.equal(o.status, 'filled');
+    assert.equal(db.positions.length, 1, 'the bought position is recorded');
   });
   await t.test('a swap waits for the approval to be readable instead of simulating against a stale replica', async () => {
     // Without the wait the swap is estimated while the replica still reports allowance 0, and it
