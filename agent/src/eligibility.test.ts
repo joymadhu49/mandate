@@ -102,9 +102,11 @@ test('native and browser trading routes fail closed while cancellation, revocati
   assert.equal(broadcast.mock.callCount(), 0);
 });
 test('a restriction discovered during transaction preparation prevents broadcast', async t => {
-  const { sendTx, walletClient } = await import('./chain.js');
+  const { publicClient, sendTx, walletClient } = await import('./chain.js');
   const values = new Map<string, string>();
   const runtime = { cache: new Map<string, unknown>(), read: (key: string) => values.get(key), write: (key: string, value: string) => { values.set(key, value); }, flush: async () => { eligibility.withdraw('alice'); } };
+  let sentNonce = 1;
+  t.mock.method(publicClient, 'getTransactionCount', async () => sentNonce++);
   t.mock.method(walletClient, 'prepareTransactionRequest', async () => ({}));
   t.mock.method(walletClient, 'signTransaction', async () => '0x01');
   const broadcast = t.mock.method(walletClient, 'sendRawTransaction', async () => { throw new Error('Must not broadcast'); });

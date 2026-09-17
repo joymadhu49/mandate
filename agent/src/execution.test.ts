@@ -37,6 +37,8 @@ test('execution safety regressions without network or signing real transactions'
   let signedCount = 0;
   let zeroOutput = false;
   let fresh = true;
+  let sentNonce = 1;
+  t.mock.method(publicClient, 'getTransactionCount', async () => sentNonce++);
   t.mock.method(walletClient, 'prepareTransactionRequest', async () => ({} as any));
   t.mock.method(walletClient, 'signTransaction', async () => `0x${(++signedCount).toString(16).padStart(2, '0')}` as const);
   t.mock.method(walletClient, 'sendRawTransaction', async () => { submitted++; return `0x${'1'.repeat(64)}` as const; });
@@ -121,6 +123,20 @@ test('execution safety regressions without network or signing real transactions'
     const mock = t.mock.method(publicClient, 'readContract', async () => true as any);
     await revokeMandate(m); await revokeMandate(m); mock.mock.restore();
     assert.equal(m.status, 'revoked'); assert.equal(submitted, 0);
+  });
+  await t.test('a lagging replica cannot hand the next transaction a nonce already used', async () => {
+    // The symptom this reproduces: a second transaction signed with the first one's nonce is rejected
+    // before the mempool, so it never mines and the account nonce never advances.
+    reset(); config.dryRun = false;
+    const nonces: (number | undefined)[] = [];
+    const stale = t.mock.method(publicClient, 'getTransactionCount', async () => 5); // never catches up
+    const prep = t.mock.method(walletClient, 'prepareTransactionRequest', async (r: { nonce?: number }) => { nonces.push(r.nonce); return {} as any; });
+    const agentAccount = spenderFor(owner);
+    await sendTx(USDC, '0x' as const, 0n, undefined, agentAccount);
+    await sendTx(USDC, '0x' as const, 0n, undefined, agentAccount);
+    await sendTx(USDC, '0x' as const, 0n, undefined, agentAccount);
+    stale.mock.restore(); prep.mock.restore();
+    assert.deepEqual(nonces, [5, 6, 7], 'each transaction takes the next nonce, not the stale one');
   });
   await t.test('funds pulled for an order that never swapped are returned to the owner', async () => {
     // Today's failure: the pull confirmed, the swap approval was never broadcast, and a dollar sat on the agent account.

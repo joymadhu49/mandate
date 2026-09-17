@@ -33,6 +33,8 @@ test('chat mandates approve USDC at setup and each stock the first time it is so
     if (args.functionName === 'isRevoked') return false;
     throw new Error(`unexpected read ${args.functionName}`);
   });
+  let sentNonce = 1;
+  t.mock.method(publicClient, 'getTransactionCount', async () => sentNonce++);
   t.mock.method(walletClient, 'prepareTransactionRequest', async (request: { data: `0x${string}` }) => {
     if (failPrepare) throw new Error('insufficient funds for gas');
     const call = decodeFunctionData({ abi: spmAbi, data: request.data });

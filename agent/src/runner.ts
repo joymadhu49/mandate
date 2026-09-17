@@ -51,12 +51,22 @@ function activationFailure(m: Mandate, error: unknown): ActivationError {
 // A raw cause can carry RPC or router detail, so it is logged rather than shown. Name the causes an owner
 // can act on; anything else keeps the generic wording.
 const NO_ROUTE = /swap quote unavailable|swap provider is busy|swap quote does not match/i;
+/** Chain and router errors can carry endpoint URLs and raw calldata; keep the sentence, drop the rest. */
+const safeDetail = (message: string) => message.split('\n')[0]
+  .replace(/https?:\/\/\S+/gi, '')
+  .replace(/0x[0-9a-fA-F]{16,}/g, '')
+  .replace(/\s+/g, ' ')
+  .trim()
+  .slice(0, 140);
 function orderFailure(m: Mandate, order: Order, error: unknown): string {
-  if (order.transactions?.length) return 'Execution did not finish. Check the recorded transaction steps before attempting another trade.';
   const message = error instanceof Error ? error.message : String(error);
+  // The owner sees their own order only, and a failure nobody can explain is worse than a wordy one.
+  const detail = safeDetail(message);
+  const because = detail ? ` Reason: ${detail}` : '';
+  if (order.transactions?.length) return `Execution did not finish. Check the recorded transaction steps before attempting another trade.${because}`;
   if (NO_ROUTE.test(message)) return `No swap route is available for ${order.symbol} right now. No funds moved; try another stock or try again later.`;
   if (NO_FEES.test(message)) return noFeesMessage(m);
-  return 'Order checks did not pass. No funds moved; the mandate will evaluate again.';
+  return `Order checks did not pass. No funds moved; the mandate will evaluate again.${because}`;
 }
 /** Refuse to prepare a registration the agent account cannot pay for, so the owner gets the funding message rather than a node error. */
 async function assertFees(m: Mandate) {
