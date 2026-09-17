@@ -39,13 +39,14 @@ test('chat research, authorization and confirmed orders stay inside trust bounda
   const m: Mandate = { id: 'chat-mandate', account: owner.address, spender: spenderFor(owner.address).address, budgetUsdc: 100, period: 'weekly', universe: [STOCKS[0].token], strategy: 'Test', risk: 'balanced', maxPositionPct: 40, takeProfitPct: 10, stopLossPct: 7, executionMode: 'simulation', control: 'chat', status: 'active', createdAt: ts() - 60,
     batch: { account: owner.address, period: 604800, start: ts() - 60, end: ts() + 86400, permissions: [{ spender: spenderFor(owner.address).address, token: USDC, allowance: '100000000', salt: '1', extraData: '0x' }] } };
   db.mandates.push(m);
-  let calls = 0, reply: unknown = { answer: 'Apple snapshot analysis, not current news.', trade: null, symbols: ['AAPLc'] };
+  let calls = 0, lastBody: any, reply: unknown = { answer: 'Apple snapshot analysis, not current news.', trade: null, symbols: ['AAPLc'] };
   t.mock.method(globalThis, 'fetch', async (url: string | URL | Request, init?: RequestInit) => {
     assert.equal(url, 'https://openrouter.ai/api/v1/chat/completions'); calls++;
     const body = JSON.parse(String(init?.body));
     assert.equal(body.response_format.json_schema.name, 'agent_chat');
     assert.ok(!JSON.stringify(body).includes(owner.address));
     assert.ok(!JSON.stringify(body).includes('signature'));
+    lastBody = body;
     return Response.json({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(reply) } }] });
   });
   const send = (message = 'Explain Apple', extra: object = {}) => request('/chat', 'POST', { requestId: randomUUID(), message, ...extra }, token);
@@ -80,6 +81,13 @@ test('chat research, authorization and confirmed orders stay inside trust bounda
     reply = { answer: 'unsafe', trade: { action: 'transfer', symbol: 'AAPLc', unit: 'usdc', amount: 10 }, symbols: [] };
     const count = chats.messages.length; assert.equal((await send()).status, 502);
     assert.equal(chats.messages.length, count); assert.equal(db.orders.length, 0);
+  });
+  await t.test('the request caps symbols, so an over-listing model is trimmed instead of discarded', async () => {
+    // The model only respects limits it is sent: without maxItems it lists all thirteen stocks and Reply throws the answer away.
+    reply = { answer: 'Every supported stock.', trade: null, symbols: STOCKS.map(s => s.symbol) };
+    const response = await send('Which stocks can I research?'); assert.equal(response.status, 200);
+    assert.equal((await response.json()).sources.length, 4);
+    assert.equal(lastBody.response_format.json_schema.schema.properties.symbols.maxItems, 4);
   });
   await t.test('a chat-only simulation activates without signatures, RPC reads or background orders', async () => {
     const before = readCalls; m.status = 'pending'; await runMandate(m);

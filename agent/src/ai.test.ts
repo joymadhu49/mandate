@@ -118,6 +118,8 @@ test('AI integration trust boundaries and failure handling', async (t) => {
     assert.deepEqual(JSON.parse(lastRequest.messages[1].content), input);
     assert.equal(lastRequest.provider.require_parameters, true);
     assert.equal(lastRequest.response_format.json_schema.strict, true);
+    // Bounds the validator enforces must also reach the model, or a legal-but-overlong draft is discarded.
+    assert.deepEqual(lastRequest.response_format.json_schema.schema.properties.strategy, { type: 'string', minLength: 10, maxLength: 1000 });
   });
   await t.test('malformed and truncated completions fail closed', async () => {
     for (const value of ['invalid', 'truncated'] as const) {
@@ -157,6 +159,7 @@ test('AI integration trust boundaries and failure handling', async (t) => {
     await assert.rejects(decide(mandate, [], { quotes: [], change24h: {}, changeSinceLastRun: {}, marketOpen: false }, 100), /invalid response/);
     assert.equal(lastRequest.model, model);
     assert.equal(lastRequest.response_format.json_schema.name, 'portfolio_decision');
+    assert.equal(lastRequest.response_format.json_schema.schema.properties.actions.maxItems, 4);
     const before = calls;
     await assert.rejects(decide({ ...mandate, id: 'another-mandate-same-wallet' }, [], { quotes: [], change24h: {}, changeSinceLastRun: {}, marketOpen: false }, 100), /Wait a minute/);
     assert.equal(calls, before);
@@ -176,6 +179,15 @@ test('AI integration trust boundaries and failure handling', async (t) => {
     assert.equal(calls, before);
     assert.equal((await aiRoutes.request('/settings', { method: 'DELETE', headers: otherHeaders })).status, 200);
     assert.equal(aiSettings(owner.address).apiKey, testKey);
+  });
+  await t.test('a production backend serves the environment key, not a saved one it cannot clear', () => {
+    // /ai/settings is 403 without development controls, so a wallet pinned to a saved key could never rotate or clear it.
+    assert.equal(aiSettings(owner.address).apiKey, testKey);
+    config.devAiSettings = false;
+    assert.equal(aiSettings(owner.address).apiKey, config.openrouterKey);
+    assert.equal(aiStatus(owner.address).source, 'none');
+    config.devAiSettings = true;
+    assert.equal(aiStatus(owner.address).source, 'saved');
   });
   await t.test('reset discards only the wallet credential', async () => {
     const response = await request('/settings', undefined, 'DELETE');

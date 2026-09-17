@@ -38,7 +38,7 @@
     "PUBLIC_URL": "https://mandate.horizonbase.app",
     "TESTFLIGHT_URL": "https://testflight.apple.com/join/xNpkKz9g",
     "MODEL": "google/gemini-2.5-flash",
-    "AI_DAILY_TOKENS_WALLET": "120000",
+    "AI_DAILY_TOKENS_WALLET": "500000",
     "AI_DAILY_TOKENS_GLOBAL": "1500000",
     "BASE_RPC_URL": "https://base-mainnet.g.alchemy.com/public",
     "BASE_RPC_FALLBACK_URL": "https://base-rpc.publicnode.com"
