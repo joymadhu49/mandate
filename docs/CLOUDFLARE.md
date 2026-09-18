@@ -10,6 +10,7 @@ Mandate's web app and API run on Cloudflare Workers at `https://mandate.horizonb
 - Durable alarms: pending activations, requested evaluations, automatic mandates and queued orders. A minute cron repairs missing alarms; active chat mandates need no idle polling.
 - Base RPC: Alchemy public primary, PublicNode fallback, with bounded timeouts and no background endpoint ranking. Base, PublicNode and dRPC public endpoints rate limited cloud-origin requests during deployment checks. Alchemy passed direct and batched reads from the deployed Worker. Public RPC still has shared limits; configure a dedicated authenticated endpoint as a Worker secret before scaling. Endpoint reference: https://www.alchemy.com/rpc/base.
 - Worker secrets: the existing `AGENT_PRIVATE_KEY`, `OPENROUTER_API_KEY`, `AI_CREDENTIALS_KEY`, `LIFI_API_KEY`, and operator `OWNER_ACCOUNTS`.
+- Optional `RELAY_API_KEY` enables authenticated Relay quotes. Set it with `cd agent && npx wrangler secret put RELAY_API_KEY`; omit it for public quotes. [Swap routing and recovery](SWAP_ROUTING.md) describes provider fallback and current route checks.
 
 The existing beta has a shared execution mode, globally capped AI budget and trading ledger. One durable ledger preserves that coordination contract and its existing limit of 100 active mandates. Static media bypasses the ledger. A larger rollout should partition trading state by wallet and explicitly coordinate the shared usage budget before changing the routing. Never create a second independently executing ledger with the same live signing key.
 

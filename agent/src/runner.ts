@@ -19,10 +19,14 @@ import {
   spenderFor,
   spentThisPeriod,
   stockByToken,
+  awaitObservable,
+  awaitBalanceIncrease,
   tokenDecimals,
+  TransactionPreparationError,
   type Quote,
 } from './chain.js';
-import { quoteSwap, type SwapQuote } from './lifi.js';
+import { quoteSwap, type SwapQuote } from './swap.js';
+import { QuoteError } from './swap-errors.js';
 import { decide, riskExit, type MarketView } from './brain.js';
 import type { Mandate, PermissionDetails, Position, Order, TransactionStep } from './types.js';
 import { approvalRequests } from './permissions.js';
@@ -47,6 +51,28 @@ function activationFailure(m: Mandate, error: unknown): ActivationError {
     return new ActivationError('Base rejected the permission signature. Revoke this mandate and create a new one.', error);
   }
   return new ActivationError('Could not reach Base. Check the backend connection, then tap Retry activation.', error);
+}
+// A raw cause can carry RPC or router detail, so it is logged rather than shown. Name the causes an owner
+// can act on; anything else keeps the generic wording.
+/** Chain and router errors can carry endpoint URLs and raw calldata; keep the sentence, drop the rest. */
+const safeDetail = (message: string) => message.split('\n')[0]
+  .replace(/https?:\/\/\S+/gi, '')
+  .replace(/0x[0-9a-fA-F]{16,}/g, '')
+  .replace(/\s+/g, ' ')
+  .trim()
+  .slice(0, 140);
+function orderFailure(m: Mandate, order: Order, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  // The owner sees their own order only, and a failure nobody can explain is worse than a wordy one.
+  const detail = safeDetail(message);
+  const because = detail ? ` Reason: ${detail}` : '';
+  if (order.transactions?.length) return `Execution did not finish. Check the recorded transaction steps before attempting another trade.${because}`;
+  if (error instanceof QuoteError) {
+    if (error.kind === 'no_route') return `No swap route is available for ${order.symbol} at this amount right now. No funds moved; try another stock or try again later.`;
+    return `${error.message} No funds moved.`;
+  }
+  if (NO_FEES.test(message)) return noFeesMessage(m);
+  return `Order checks did not pass. No funds moved; the mandate will evaluate again.${because}`;
 }
 /** Refuse to prepare a registration the agent account cannot pay for, so the owner gets the funding message rather than a node error. */
 async function assertFees(m: Mandate) {
@@ -173,26 +199,82 @@ async function pullFromUser(m: Mandate, token: `0x${string}`, amount: bigint, or
   return sendTx(SPEND_PERMISSION_MANAGER, data, 0n, recorder(order, 'pull'), spenderFor(m.account), () => eligibility.assert(m.account));
 }
 
+class ExpiredQuoteError extends Error {
+  constructor() { super('Swap quote expired before submission.'); }
+}
 async function swap(fromToken: `0x${string}`, toToken: `0x${string}`, amount: bigint, q: SwapQuote, order: Order, from: PrivateKeyAccount) {
-  if (Date.now() >= q.expiresAt) throw new Error('Swap quote expired. Reconciliation is required.');
+  try { return await executeSwap(fromToken, toToken, amount, q, order, from); }
+  catch (error) {
+    const staleRoute = error instanceof ExpiredQuoteError
+      || (error instanceof TransactionPreparationError && /revert/i.test(error.message) && !NO_FEES.test(error.message));
+    if (!staleRoute || order.transactions?.some(step => step.name === 'swap')) throw error;
+    const fresh = await quoteSwap({ from: from.address, fromToken, toToken, fromAmount: amount });
+    if (fresh.toAmountMin < q.toAmountMin) throw new Error('The refreshed quote is below the original minimum output.');
+    // The pull is already confirmed. Recheck the new approval target, but never pull a second time.
+    return executeSwap(fromToken, toToken, amount, fresh, order, from);
+  }
+}
+async function executeSwap(fromToken: `0x${string}`, toToken: `0x${string}`, amount: bigint, q: SwapQuote, order: Order, from: PrivateKeyAccount) {
+  if (Date.now() >= q.expiresAt) throw new ExpiredQuoteError();
   const allowance = await publicClient.readContract({ address: fromToken, abi: erc20Abi, functionName: 'allowance', args: [from.address, q.approvalAddress] });
   if (allowance < amount) {
     await sendTx(fromToken, encode({ abi: erc20Abi, functionName: 'approve', args: [q.approvalAddress, amount] }), 0n, recorder(order, 'swap-approval'), from, () => eligibility.assert(order.account));
+    await awaitObservable('The swap approval', async () =>
+      await publicClient.readContract({ address: fromToken, abi: erc20Abi, functionName: 'allowance', args: [from.address, q.approvalAddress] }) >= amount);
   }
+  // The swap is simulated before it is signed, so the pulled funds must be readable too.
+  await awaitObservable('The transferred amount', async () =>
+    await publicClient.readContract({ address: fromToken, abi: erc20Abi, functionName: 'balanceOf', args: [from.address] }) >= amount);
   const before = await publicClient.readContract({ address: toToken, abi: erc20Abi, functionName: 'balanceOf', args: [from.address] });
-  if (Date.now() >= q.expiresAt) throw new Error('Swap quote expired. Reconciliation is required.');
-  const hash = await sendTx(q.to, q.data, q.value, recorder(order, 'swap'), from, () => eligibility.assert(order.account));
-  const after = await publicClient.readContract({ address: toToken, abi: erc20Abi, functionName: 'balanceOf', args: [from.address] });
-  const received = after - before;
+  if (Date.now() >= q.expiresAt) throw new ExpiredQuoteError();
+  const hash = await sendTx(q.to, q.data, q.value, recorder(order, 'swap'), from, () => {
+    eligibility.assert(order.account);
+    if (Date.now() >= q.expiresAt) throw new ExpiredQuoteError();
+  });
+  const received = await awaitBalanceIncrease(
+    () => publicClient.readContract({ address: toToken, abi: erc20Abi, functionName: 'balanceOf', args: [from.address] }), before, q.toAmountMin);
   if (received <= 0n || received < q.toAmountMin) throw new Error('Swap output is below the minimum.');
   return { hash, received, tool: q.tool };
+}
+
+/** A live order that failed after moving funds leaves them on the agent account; they are the owner's. */
+export const needsReturn = (o: Order) => !o.dryRun && o.status === 'failed'
+  && !!o.transactions?.some(step => step.status === 'confirmed')
+  && !o.transactions.some(step => step.name === 'return' && step.status === 'confirmed');
+
+/**
+ * The agent account is a conduit, never a vault. Anything it still holds after a failed live order goes
+ * back to the owner's wallet. Sweeping the whole balance is safe because every token on this account
+ * belongs to that one owner, and returning funds is the right direction even if a prepared transaction
+ * lands later. Never throws: a failed return must not mask the failure that stranded the funds.
+ */
+export async function returnStrandedFunds(m: Mandate, order: Order) {
+  if (order.dryRun || config.dryRun) return;
+  const agent = spenderFor(m.account);
+  // Keep the canonical addresses; a buy strands USDC, a sell strands the stock, and a failure can strand either.
+  const tokens = order.token.toLowerCase() === USDC.toLowerCase() ? [USDC] : [USDC, order.token];
+  for (const token of tokens) {
+    try {
+      const balance = await publicClient.readContract({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [agent.address] });
+      if (balance <= 0n) continue;
+      await sendTx(token, encode({ abi: erc20Abi, functionName: 'transfer', args: [m.account, balance] }), 0n, recorder(order, 'return'), agent);
+      const symbol = token.toLowerCase() === USDC.toLowerCase() ? 'USDC' : stockByToken(token)?.symbol ?? order.symbol;
+      log({ mandateId: m.id, account: m.account, kind: 'error', symbol, rationale: `Returned ${symbol} left on the agent account to your wallet after the failed order.` });
+    } catch (error) {
+      console.error('stranded_return_failed', error instanceof Error ? error.message.split('\n')[0].slice(0, 160) : 'unknown');
+      const message = error instanceof Error ? error.message : String(error);
+      log({ mandateId: m.id, account: m.account, kind: 'error', symbol: order.symbol,
+        rationale: NO_FEES.test(message) ? noFeesMessage(m) : 'Funds left on the agent account could not be returned yet. This is retried automatically.' });
+    }
+  }
 }
 
 async function sendToUser(m: Mandate, token: `0x${string}`, amount: bigint, order: Order) {
   const before = await publicClient.readContract({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [m.account] });
   const hash = await sendTx(token, encode({ abi: erc20Abi, functionName: 'transfer', args: [m.account, amount] }), 0n, recorder(order, 'delivery'), spenderFor(m.account));
-  const after = await publicClient.readContract({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [m.account] });
-  if (after - before < amount) throw new Error('Token delivery could not be verified.');
+  const delivered = await awaitBalanceIncrease(
+    () => publicClient.readContract({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [m.account] }), before, amount);
+  if (delivered < amount) throw new Error('Token delivery could not be verified.');
   return hash;
 }
 
@@ -380,12 +462,14 @@ export async function executeOrder(order: Order) {
     }
     if (!result) throw new Error('The order amount is too small.');
     order.status = 'filled'; order.filledUsd = result.amountUsd; order.txHash = result.txHash;
-  } catch {
+  } catch (error) {
     order.status = 'failed';
     const submitted = !!order.transactions?.length;
-    order.error = submitted ? 'Execution did not finish. Check the recorded transaction steps before attempting another trade.' : 'Order checks did not pass. No funds moved; the mandate will evaluate again.';
+    console.error('order_execution_failed', error instanceof Error ? error.message.split('\n')[0].slice(0, 160) : 'unknown');
+    order.error = orderFailure(m, order, error);
     if (!config.dryRun && submitted) m.status = 'error'; // Quarantine uncertain/partial trades only.
     log({ mandateId: m.id, account: m.account, kind: 'error', symbol: order.symbol, rationale: order.error });
+    if (needsReturn(order)) await returnStrandedFunds(m, order);
   } finally {
     order.updatedAt = now(); running.delete(m.id); save();
   }
@@ -445,7 +529,12 @@ export function startScheduler() {
   setInterval(async () => {
     if (processing) return;
     processing = true;
-    try { for (const order of [...db.orders].reverse()) await executeOrder(order); }
+    try {
+      for (const order of [...db.orders].reverse()) await executeOrder(order);
+      const stranded = db.orders.find(needsReturn);
+      const owner = stranded && db.mandates.find(m => m.id === stranded.mandateId);
+      if (stranded && owner) await returnStrandedFunds(owner, stranded);
+    }
     catch { console.error('order_queue_failed'); }
     finally { processing = false; }
   }, 5000);

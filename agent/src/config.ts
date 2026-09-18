@@ -83,6 +83,8 @@ export const config = {
     if (!isTest) atomicWriteJson(modePath, { live });
     state.live = live;
   },
+  /** Preferred swap venue. Recoverable quote failures try the other provider once. */
+  swapProvider: process.env.SWAP_PROVIDER === 'lifi' ? 'lifi' as const : 'relay' as const,
   openrouterKey: process.env.OPENROUTER_API_KEY ?? '',
   model: process.env.MODEL ?? 'google/gemini-2.5-flash',
   devAiSettings: process.env.DEV_AI_SETTINGS === '1' && process.env.NODE_ENV !== 'production',

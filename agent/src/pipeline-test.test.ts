@@ -11,6 +11,7 @@ test('pipeline test plans honestly and executes only when live, funded and confi
   process.env.DB_PATH = join(directory, 'db.json'); process.env.NODE_ENV = 'test';
   delete process.env.DRY_RUN; delete process.env.LOCK_MODE;
   process.env.AGENT_PRIVATE_KEY = generatePrivateKey(); process.env.OPENROUTER_API_KEY = '';
+  process.env.SWAP_PROVIDER = 'lifi'; // this suite covers the LI.FI validator and the wallet-signed plan
   const { app } = await import('./app.js');
   await (await import('../test-support/eligibility.js')).eligibleOwnerFixture(t);
   const { config } = await import('./config.js');
@@ -46,6 +47,8 @@ test('pipeline test plans honestly and executes only when live, funded and confi
   t.mock.method(publicClient, 'getBalance', async () => spenderWei);
   t.mock.method(publicClient, 'getGasPrice', async () => 1_000_000n);
   t.mock.method(publicClient, 'estimateGas', async () => 200_000n);
+  let sentNonce = 1;
+  t.mock.method(publicClient, 'getTransactionCount', async () => sentNonce++);
   t.mock.method(walletClient, 'prepareTransactionRequest', async () => ({} as never));
   t.mock.method(walletClient, 'signTransaction', async () => '0x01' as const);
   t.mock.method(walletClient, 'sendRawTransaction', async () => { swaps++; spenderWei -= ethWeiFor(1) + 200_000_000_000n; return `0x${'1'.repeat(64)}` as const; });

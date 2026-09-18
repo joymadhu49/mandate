@@ -173,28 +173,86 @@ export async function ethUsdPrice(): Promise<{ price: number; updatedAt: number 
 export const ethBalance = (owner: Address) => publicClient.getBalance({ address: owner });
 
 let transactionTail = Promise.resolve();
+// A replica that has not yet caught up reports a nonce the previous transaction already consumed, and the
+// duplicate is rejected before it ever reaches the mempool. Remember what this process assigned and never
+// go backwards. Any send failure drops the entry so a genuine gap is re-read from the chain, and a stale
+// entry expires rather than pinning the sequence forward forever.
+const assignedNonce = new Map<string, { next: number; at: number }>();
+const NONCE_MEMORY_MS = 120_000;
+/** Preparation has no signed transaction or broadcast; callers may safely replace a stale route. */
+export class TransactionPreparationError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : 'Transaction preparation failed.', { cause });
+  }
+}
+function plannedNonce(address: string, pending: number) {
+  const seen = assignedNonce.get(address.toLowerCase());
+  return seen && Date.now() - seen.at < NONCE_MEMORY_MS && seen.next > pending ? seen.next : pending;
+}
 export async function sendTx(to: Address, data: Hex, value = 0n, record?: (hash: Hex, status: TransactionStep['status']) => void, from: PrivateKeyAccount = spender, beforeSend?: () => void) {
   if (cloudRuntime && process.env.SCHEDULER_ENABLED !== '1') throw new Error('Trading is temporarily paused for maintenance.');
-  // One spender owns the nonce sequence across approvals, orders and revocations.
+  // One spender owns the nonce sequence across approvals, orders and revocations. An invocation killed
+  // between acquiring and releasing this lock would never run its finally, so the wait is bounded: a
+  // stalled predecessor must not deadlock every future transaction.
   const previous = transactionTail;
   let release!: () => void;
   transactionTail = new Promise<void>(resolve => { release = resolve; });
-  await previous;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([previous, new Promise<void>(resolve => { timer = setTimeout(resolve, 90_000); })]);
+  } finally { if (timer) clearTimeout(timer); }
+  const key = from.address.toLowerCase();
   try {
     beforeSend?.();
-    const request = await walletClient.prepareTransactionRequest({ account: from, to, data, value });
+    // A transient nonce read must not fail the trade: fall back to the client's own assignment.
+    const pending = await publicClient.getTransactionCount({ address: from.address, blockTag: 'pending' }).catch(() => undefined);
+    const nonce = pending === undefined ? undefined : plannedNonce(key, pending);
+    const request = await walletClient.prepareTransactionRequest({ account: from, to, data, value, nonce })
+      .catch(error => { throw new TransactionPreparationError(error); });
     const signed = await walletClient.signTransaction({ ...request, account: from } as Parameters<typeof walletClient.signTransaction>[0]);
     const hash = keccak256(signed);
     // Durably record the hash BEFORE broadcasting. A crash cannot hide a submitted step.
     record?.(hash, 'prepared');
     await flushPersistence(); // Cloud storage must commit before any onchain broadcast.
     beforeSend?.(); // Recheck after nonce wait, signing and persistence awaits.
-    await walletClient.sendRawTransaction({ serializedTransaction: signed });
+    try { await walletClient.sendRawTransaction({ serializedTransaction: signed }); }
+    catch (error) { assignedNonce.delete(key); throw error; }
+    if (nonce !== undefined) assignedNonce.set(key, { next: nonce + 1, at: Date.now() });
     const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000 });
     if (receipt.status !== 'success') { record?.(hash, 'failed'); throw new Error('Transaction reverted.'); }
     record?.(hash, 'confirmed');
     return hash;
   } finally { release(); }
+}
+
+/**
+ * A confirmed receipt only proves that one replica has the block. The very next read can land on a
+ * replica that is still behind, and a step simulated against that stale view fails for state that
+ * already exists: a swap estimated before the approval is visible reverts with TRANSFER_FROM_FAILED.
+ * Wait for the state the next step depends on to actually be readable.
+ */
+export async function awaitObservable(what: string, check: () => Promise<boolean>, timeoutMs = 12_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (await check().catch(() => false)) return;
+    if (Date.now() >= deadline) throw new Error(`${what} is not visible on Base yet. Nothing further was submitted.`);
+    await new Promise(resolve => setTimeout(resolve, 1_000));
+  }
+}
+
+/**
+ * The same lag on the way back: a balance read taken straight after a confirmed transfer can still
+ * return the pre-transfer view, which reads as a swap that produced nothing or a delivery that never
+ * arrived. Poll until the expected increase is visible, then let the caller judge the result.
+ */
+export async function awaitBalanceIncrease(read: () => Promise<bigint>, before: bigint, minimum: bigint, timeoutMs = 12_000): Promise<bigint> {
+  const deadline = Date.now() + timeoutMs;
+  let latest = before;
+  for (;;) {
+    latest = await read().catch(() => latest);
+    if (latest - before >= minimum || Date.now() >= deadline) return latest - before;
+    await new Promise(resolve => setTimeout(resolve, 1_000));
+  }
 }
 
 export const encode = encodeFunctionData;

@@ -1,6 +1,7 @@
 // Same-chain swaps on Base via LI.FI. Hosted requests use a server-side API key.
 import type { Address, Hex } from './types.js';
 import { z } from 'zod';
+import { fetchQuote, quoteHttpError } from './swap-errors.js';
 
 const API = 'https://li.quest/v1';
 // Reviewed Base deployments: https://github.com/lifinance/contracts/blob/main/deployments/base.json
@@ -47,12 +48,11 @@ export async function quoteSwap(params: {
     integrator: 'mandate',
   });
   const apiKey = process.env.LIFI_API_KEY?.trim();
-  const res = await fetch(`${API}/quote?${q}`, {
+  const res = await fetchQuote(`${API}/quote?${q}`, {
     signal: AbortSignal.timeout(15_000), redirect: 'manual',
     ...(apiKey ? { headers: { 'x-lifi-api-key': apiKey } } : {}),
   });
-  if (res.status === 429) throw new Error('The swap provider is busy. Please try again shortly.');
-  if (!res.ok) throw new Error('Swap quote unavailable.');
+  if (!res.ok) throw await quoteHttpError(res);
   const j = QuoteResponse.parse(await res.json());
   const tx = j.transactionRequest;
   const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();

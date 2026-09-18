@@ -30,9 +30,11 @@ test('durable documents and sessions remain isolated across interleaved storage 
 });
 
 test('a failed durable commit prevents broadcasting a signed transaction', async t => {
-  const { sendTx, walletClient } = await import('./chain.js');
+  const { publicClient, sendTx, walletClient } = await import('./chain.js');
   const state = backing();
   state.store.flush = async () => { throw new Error('durable commit failed'); };
+  let sentNonce = 1;
+  t.mock.method(publicClient, 'getTransactionCount', async () => sentNonce++);
   t.mock.method(walletClient, 'prepareTransactionRequest', async () => ({}));
   t.mock.method(walletClient, 'signTransaction', async () => '0x01');
   const broadcast = t.mock.method(walletClient, 'sendRawTransaction', async () => { throw new Error('must never broadcast'); });

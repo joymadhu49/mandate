@@ -23,6 +23,8 @@ test('mandates from the other execution mode stay dormant and can always be revo
   let submitted = 0;
   t.mock.method(globalThis, 'fetch', async () => { throw new Error('Unexpected external request'); });
   t.mock.method(publicClient, 'verifyMessage', async (args: Parameters<typeof publicClient.verifyMessage>[0]) => verifyMessage(args));
+  let sentNonce = 1;
+  t.mock.method(publicClient, 'getTransactionCount', async () => sentNonce++);
   t.mock.method(walletClient, 'prepareTransactionRequest', async () => ({} as never));
   t.mock.method(walletClient, 'signTransaction', async () => '0x01' as const);
   t.mock.method(walletClient, 'sendRawTransaction', async () => { submitted++; return `0x${'1'.repeat(64)}` as const; });

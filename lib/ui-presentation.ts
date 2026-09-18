@@ -40,6 +40,7 @@ const transactionNames: Record<string, string> = {
   'swap-approval': 'Approve swap spending',
   swap: 'Execute swap',
   delivery: 'Deliver assets to your wallet',
+  return: 'Return funds to your wallet',
   'permission-revocation': 'Revoke spending permission',
 };
 

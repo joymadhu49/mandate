@@ -107,6 +107,17 @@ test('chat research, authorization and confirmed orders stay inside trust bounda
     m.status = 'revoked'; await assert.rejects(validateTrade(m, { action: 'buy', token: STOCKS[0].token, usd: 10 }, quotes())); m.status = 'active';
   });
   let proposalId: string;
+  await t.test('a live request with no route is rejected before presenting a proposal', async t => {
+    config.dryRun = false; m.executionMode = 'live';
+    t.mock.method(publicClient, 'readContract', async () => ({ spend: 0n }));
+    t.mock.method(globalThis, 'fetch', async (url: string) => url.includes('relay.link')
+      ? Response.json({ errorCode: 'NO_SWAP_ROUTES_FOUND' }, { status: 400 })
+      : Response.json({ code: 1002 }, { status: 404 }));
+    try {
+      await assert.rejects(makeProposal(m, { action: 'buy', symbol: 'AAPLc', unit: 'usdc', amount: 10 }, quotes()), /No swap route.*AAPLc/);
+      assert.equal(db.orders.length, 0);
+    } finally { config.dryRun = true; m.executionMode = 'simulation'; }
+  });
   await t.test('buy request produces a proposal only; no implicit execution', async () => {
     reply = { answer: 'Buy proposal', trade: { action: 'buy', symbol: 'Apple', unit: 'usdc', amount: 10 }, symbols: ['AAPLc'] };
     const response = await send('Buy $10 of Apple', { mandateId: m.id }); assert.equal(response.status, 200);
