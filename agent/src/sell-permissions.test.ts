@@ -51,6 +51,18 @@ test('chat mandates approve USDC at setup and each stock the first time it is so
 
   const owner = privateKeyToAccount(generatePrivateKey()), other = privateKeyToAccount(generatePrivateKey());
   const agent = spenderFor(owner.address).address;
+  const { RELAY_APPROVAL_PROXY } = await import('./relay.js');
+  t.mock.method(globalThis, 'fetch', async (url: string, init?: RequestInit) => {
+    assert.equal(url, 'https://api.relay.link/quote');
+    const body = JSON.parse(String(init?.body));
+    assert.equal(body.originCurrency.toLowerCase(), STOCKS[1].token.toLowerCase());
+    assert.equal(body.destinationCurrency, USDC);
+    assert.equal(body.amount, '500000000000000000');
+    return Response.json({
+      steps: [{ id: 'swap', kind: 'transaction', items: [{ data: { from: agent, to: RELAY_APPROVAL_PROXY, chainId: 8453, value: '0', data: '0x1234' } }] }],
+      details: { currencyIn: { amount: body.amount, currency: { address: body.originCurrency } }, currencyOut: { amount: '100000000', minimumAmount: '99000000', currency: { address: USDC } } },
+    });
+  });
   const request = (path: string, method = 'GET', body?: object, token?: string) => app.request(path, { method, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
   const login = async (wallet: typeof owner) => {
     const challenge = await (await request('/auth/challenge', 'POST', { account: wallet.address })).json();
@@ -136,6 +148,14 @@ test('chat mandates approve USDC at setup and each stock the first time it is so
     assert.equal(db.orders.length, 0);
     assert.equal((await add(permission(1, 3))).status, 201);
     assert.equal(registered.length, 2);
+    const unavailable = t.mock.method(globalThis, 'fetch', async (url: string) => url.includes('relay.link')
+      ? Response.json({ errorCode: 'NO_SWAP_ROUTES_FOUND' }, { status: 400 })
+      : Response.json({ code: 1002 }, { status: 404 }));
+    const noRoute = await request(`/chat/proposals/${proposal.id}/confirm`, 'POST', undefined, token);
+    unavailable.mock.restore();
+    assert.equal(noRoute.status, 409);
+    assert.match((await noRoute.json()).error, /No swap route/);
+    assert.equal(db.orders.length, 0);
     const queued = await request(`/chat/proposals/${proposal.id}/confirm`, 'POST', undefined, token);
     assert.equal(queued.status, 201);
     assert.equal(db.orders[0].action, 'sell');

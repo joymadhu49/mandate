@@ -125,11 +125,21 @@ test('execution safety regressions without network or signing real transactions'
   await t.test('an unroutable stock names the reason instead of a generic check failure', async () => {
     reset(); config.dryRun = false; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false; db.mandates.push(m);
     // What LI.FI actually answers for a token it cannot route on Base.
-    const mock = t.mock.method(globalThis, 'fetch', async () => Response.json({ message: 'No available quotes for the requested transfer' }, { status: 404 }));
+    const mock = t.mock.method(globalThis, 'fetch', async (url: any) => String(url).includes('relay.link')
+      ? Response.json({ errorCode: 'NO_SWAP_ROUTES_FOUND' }, { status: 400 })
+      : Response.json({ code: 1002, message: 'No available quotes for the requested transfer' }, { status: 404 }));
     await executeOrder(o); mock.mock.restore();
     assert.equal(o.status, 'failed'); assert.equal(submitted, 0); assert.equal(m.status, 'active');
     assert.match(o.error ?? '', new RegExp(`No swap route is available for ${STOCKS[0].symbol}`));
     assert.match(o.error ?? '', /No funds moved/);
+  });
+  await t.test('provider outages are not mislabeled as missing liquidity', async () => {
+    reset(); config.dryRun = false; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false; db.mandates.push(m);
+    const mock = t.mock.method(globalThis, 'fetch', async () => Response.json({}, { status: 503 }));
+    await executeOrder(o); mock.mock.restore();
+    assert.equal(submitted, 0);
+    assert.match(o.error ?? '', /provider could not be reached/);
+    assert.doesNotMatch(o.error ?? '', /No swap route/);
   });
   await t.test('reverted pull is durably journaled and quarantines mandate', async () => {
     reset(); config.dryRun = false; reverted = true; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false; db.mandates.push(m); db.orders.push(o);
@@ -181,6 +191,18 @@ test('execution safety regressions without network or signing real transactions'
     stale.mock.restore(); prep.mock.restore();
     assert.deepEqual(nonces, [5, 6, 7], 'each transaction takes the next nonce, not the stale one');
   });
+  await t.test('a quote that expires during the pull is refreshed without pulling twice', async t => {
+    reset(); config.dryRun = false; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false; db.mandates.push(m);
+    let quoteCalls = 0;
+    const clock = Date.now();
+    t.mock.method(Date, 'now', () => clock + (submitted > 0 ? 60_000 : 0));
+    t.mock.method(globalThis, 'fetch', async () => { quoteCalls++; return Response.json(relayQuote()); });
+    await executeOrder(o);
+    assert.equal(o.status, 'filled');
+    assert.equal(quoteCalls, 2);
+    assert.equal(o.transactions?.filter(s => s.name === 'pull').length, 1);
+    assert.equal(o.transactions?.filter(s => s.name === 'swap').length, 1);
+  });
   await t.test('funds pulled for an order that never swapped are returned to the owner', async () => {
     // Today's failure: the pull confirmed, the swap approval was never broadcast, and a dollar sat on the agent account.
     reset(); config.dryRun = false; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false;
@@ -191,6 +213,56 @@ test('execution safety regressions without network or signing real transactions'
     assert.equal(o.status, 'failed'); assert.equal(db.positions.length, 0);
     assert.ok(o.transactions?.some(step => step.name === 'return' && step.status === 'confirmed'), 'stranded funds were returned');
     assert.equal(needsReturn(o), false);
+  });
+  await t.test('a route that reverts during simulation is refreshed once before any swap is signed', async t => {
+    reset(); config.dryRun = false; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false; db.mandates.push(m);
+    let attempts = 0, quotes = 0;
+    t.mock.method(globalThis, 'fetch', async () => { quotes++; return Response.json(relayQuote()); });
+    t.mock.method(walletClient, 'prepareTransactionRequest', async (request: { to: string }) => {
+      if (request.to === RELAY_APPROVAL_PROXY && ++attempts === 1) throw new Error('Execution reverted: stale route');
+      return {} as any;
+    });
+    await executeOrder(o);
+    assert.equal(o.status, 'filled'); assert.equal(quotes, 2); assert.equal(attempts, 2);
+    assert.equal(o.transactions?.filter(s => s.name === 'pull').length, 1);
+    assert.equal(o.transactions?.filter(s => s.name === 'swap').length, 1);
+  });
+  await t.test('refresh refuses a lower minimum and returns the pulled funds', async t => {
+    reset(); config.dryRun = false; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false; db.mandates.push(m);
+    let quotes = 0;
+    const clock = Date.now();
+    t.mock.method(Date, 'now', () => clock + (submitted > 0 ? 60_000 : 0));
+    t.mock.method(globalThis, 'fetch', async () => {
+      const quote = relayQuote();
+      if (++quotes === 2) quote.details.currencyOut.minimumAmount = '1';
+      return Response.json(quote);
+    });
+    await executeOrder(o);
+    assert.equal(o.status, 'failed'); assert.equal(quotes, 2);
+    assert.match(o.error ?? '', /below the original minimum/);
+    assert.equal(o.transactions?.some(s => s.name === 'swap'), false);
+    assert.ok(o.transactions?.some(s => s.name === 'return' && s.status === 'confirmed'));
+  });
+  await t.test('repeated simulation failure stops after one refresh', async t => {
+    reset(); config.dryRun = false; const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false; db.mandates.push(m);
+    let quotes = 0;
+    t.mock.method(globalThis, 'fetch', async () => { quotes++; return Response.json(relayQuote()); });
+    t.mock.method(walletClient, 'prepareTransactionRequest', async (request: { to: string }) => {
+      if (request.to === RELAY_APPROVAL_PROXY) throw new Error('Execution reverted: stale route');
+      return {} as any;
+    });
+    await executeOrder(o);
+    assert.equal(o.status, 'failed'); assert.equal(quotes, 2);
+    assert.equal(o.transactions?.some(s => s.name === 'swap'), false);
+  });
+  await t.test('a broadcast swap that reverts is never retried', async t => {
+    reset(); config.dryRun = false; revertAt = 2;
+    const m = mandate(); m.executionMode = 'live'; const o = order(); o.dryRun = false; db.mandates.push(m);
+    let quotes = 0;
+    t.mock.method(globalThis, 'fetch', async () => { quotes++; return Response.json(relayQuote()); });
+    await executeOrder(o);
+    assert.equal(o.status, 'failed'); assert.equal(quotes, 1);
+    assert.equal(o.transactions?.filter(s => s.name === 'swap').length, 1);
   });
   await t.test('a return that could not be sent stays pending so the scheduler retries it', async () => {
     reset(); config.dryRun = false; const m = mandate(); const o = order(); o.dryRun = false; o.status = 'failed';

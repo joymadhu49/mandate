@@ -35,6 +35,31 @@ test('Relay quotes are accepted only when they match the requested trade', async
   const original = globalThis.fetch;
   t.after(() => { globalThis.fetch = original; });
 
+  await t.test('a rejected optional API key retries once without credentials or attribution', async () => {
+    const key = process.env.RELAY_API_KEY;
+    process.env.RELAY_API_KEY = 'invalid-test-key';
+    let calls = 0;
+    try {
+      globalThis.fetch = (async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        const headers = new Headers(init?.headers);
+        calls++;
+        if (calls === 1) {
+          assert.equal(headers.get('x-api-key'), 'invalid-test-key');
+          assert.equal(body.referrer, 'mandate');
+          return Response.json({ errorCode: 'UNAUTHORIZED_QUOTE' }, { status: 401 });
+        }
+        assert.equal(headers.has('x-api-key'), false);
+        assert.equal(body.referrer, undefined);
+        return Response.json(valid());
+      }) as typeof fetch;
+      assert.equal((await ask()).tool, 'relay');
+      assert.equal(calls, 2);
+    } finally {
+      if (key === undefined) delete process.env.RELAY_API_KEY; else process.env.RELAY_API_KEY = key;
+    }
+  });
+
   await t.test('a matching quote yields the swap call and the approval target', async () => {
     respondWith(valid());
     const quote = await ask();
@@ -94,8 +119,8 @@ test('Relay quotes are accepted only when they match the requested trade', async
   }
 
   await t.test('provider outages are reported without a quote', async () => {
-    respondWith({ message: 'no routes found' }, 400);
-    await assert.rejects(ask(), /Swap quote unavailable/);
+    respondWith({ errorCode: 'NO_SWAP_ROUTES_FOUND', message: 'no routes found' }, 400);
+    await assert.rejects(ask(), /No swap route/);
     respondWith({}, 429);
     await assert.rejects(ask(), /busy/);
   });

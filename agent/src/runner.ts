@@ -22,9 +22,11 @@ import {
   awaitObservable,
   awaitBalanceIncrease,
   tokenDecimals,
+  TransactionPreparationError,
   type Quote,
 } from './chain.js';
 import { quoteSwap, type SwapQuote } from './swap.js';
+import { QuoteError } from './swap-errors.js';
 import { decide, riskExit, type MarketView } from './brain.js';
 import type { Mandate, PermissionDetails, Position, Order, TransactionStep } from './types.js';
 import { approvalRequests } from './permissions.js';
@@ -52,7 +54,6 @@ function activationFailure(m: Mandate, error: unknown): ActivationError {
 }
 // A raw cause can carry RPC or router detail, so it is logged rather than shown. Name the causes an owner
 // can act on; anything else keeps the generic wording.
-const NO_ROUTE = /swap quote unavailable|swap provider is busy|swap quote does not match/i;
 /** Chain and router errors can carry endpoint URLs and raw calldata; keep the sentence, drop the rest. */
 const safeDetail = (message: string) => message.split('\n')[0]
   .replace(/https?:\/\/\S+/gi, '')
@@ -66,7 +67,10 @@ function orderFailure(m: Mandate, order: Order, error: unknown): string {
   const detail = safeDetail(message);
   const because = detail ? ` Reason: ${detail}` : '';
   if (order.transactions?.length) return `Execution did not finish. Check the recorded transaction steps before attempting another trade.${because}`;
-  if (NO_ROUTE.test(message)) return `No swap route is available for ${order.symbol} right now. No funds moved; try another stock or try again later.`;
+  if (error instanceof QuoteError) {
+    if (error.kind === 'no_route') return `No swap route is available for ${order.symbol} at this amount right now. No funds moved; try another stock or try again later.`;
+    return `${error.message} No funds moved.`;
+  }
   if (NO_FEES.test(message)) return noFeesMessage(m);
   return `Order checks did not pass. No funds moved; the mandate will evaluate again.${because}`;
 }
@@ -195,8 +199,23 @@ async function pullFromUser(m: Mandate, token: `0x${string}`, amount: bigint, or
   return sendTx(SPEND_PERMISSION_MANAGER, data, 0n, recorder(order, 'pull'), spenderFor(m.account), () => eligibility.assert(m.account));
 }
 
+class ExpiredQuoteError extends Error {
+  constructor() { super('Swap quote expired before submission.'); }
+}
 async function swap(fromToken: `0x${string}`, toToken: `0x${string}`, amount: bigint, q: SwapQuote, order: Order, from: PrivateKeyAccount) {
-  if (Date.now() >= q.expiresAt) throw new Error('Swap quote expired. Reconciliation is required.');
+  try { return await executeSwap(fromToken, toToken, amount, q, order, from); }
+  catch (error) {
+    const staleRoute = error instanceof ExpiredQuoteError
+      || (error instanceof TransactionPreparationError && /revert/i.test(error.message) && !NO_FEES.test(error.message));
+    if (!staleRoute || order.transactions?.some(step => step.name === 'swap')) throw error;
+    const fresh = await quoteSwap({ from: from.address, fromToken, toToken, fromAmount: amount });
+    if (fresh.toAmountMin < q.toAmountMin) throw new Error('The refreshed quote is below the original minimum output.');
+    // The pull is already confirmed. Recheck the new approval target, but never pull a second time.
+    return executeSwap(fromToken, toToken, amount, fresh, order, from);
+  }
+}
+async function executeSwap(fromToken: `0x${string}`, toToken: `0x${string}`, amount: bigint, q: SwapQuote, order: Order, from: PrivateKeyAccount) {
+  if (Date.now() >= q.expiresAt) throw new ExpiredQuoteError();
   const allowance = await publicClient.readContract({ address: fromToken, abi: erc20Abi, functionName: 'allowance', args: [from.address, q.approvalAddress] });
   if (allowance < amount) {
     await sendTx(fromToken, encode({ abi: erc20Abi, functionName: 'approve', args: [q.approvalAddress, amount] }), 0n, recorder(order, 'swap-approval'), from, () => eligibility.assert(order.account));
@@ -207,8 +226,11 @@ async function swap(fromToken: `0x${string}`, toToken: `0x${string}`, amount: bi
   await awaitObservable('The transferred amount', async () =>
     await publicClient.readContract({ address: fromToken, abi: erc20Abi, functionName: 'balanceOf', args: [from.address] }) >= amount);
   const before = await publicClient.readContract({ address: toToken, abi: erc20Abi, functionName: 'balanceOf', args: [from.address] });
-  if (Date.now() >= q.expiresAt) throw new Error('Swap quote expired. Reconciliation is required.');
-  const hash = await sendTx(q.to, q.data, q.value, recorder(order, 'swap'), from, () => eligibility.assert(order.account));
+  if (Date.now() >= q.expiresAt) throw new ExpiredQuoteError();
+  const hash = await sendTx(q.to, q.data, q.value, recorder(order, 'swap'), from, () => {
+    eligibility.assert(order.account);
+    if (Date.now() >= q.expiresAt) throw new ExpiredQuoteError();
+  });
   const received = await awaitBalanceIncrease(
     () => publicClient.readContract({ address: toToken, abi: erc20Abi, functionName: 'balanceOf', args: [from.address] }), before, q.toAmountMin);
   if (received <= 0n || received < q.toAmountMin) throw new Error('Swap output is below the minimum.');

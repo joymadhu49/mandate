@@ -179,6 +179,12 @@ let transactionTail = Promise.resolve();
 // entry expires rather than pinning the sequence forward forever.
 const assignedNonce = new Map<string, { next: number; at: number }>();
 const NONCE_MEMORY_MS = 120_000;
+/** Preparation has no signed transaction or broadcast; callers may safely replace a stale route. */
+export class TransactionPreparationError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : 'Transaction preparation failed.', { cause });
+  }
+}
 function plannedNonce(address: string, pending: number) {
   const seen = assignedNonce.get(address.toLowerCase());
   return seen && Date.now() - seen.at < NONCE_MEMORY_MS && seen.next > pending ? seen.next : pending;
@@ -201,7 +207,8 @@ export async function sendTx(to: Address, data: Hex, value = 0n, record?: (hash:
     // A transient nonce read must not fail the trade: fall back to the client's own assignment.
     const pending = await publicClient.getTransactionCount({ address: from.address, blockTag: 'pending' }).catch(() => undefined);
     const nonce = pending === undefined ? undefined : plannedNonce(key, pending);
-    const request = await walletClient.prepareTransactionRequest({ account: from, to, data, value, nonce });
+    const request = await walletClient.prepareTransactionRequest({ account: from, to, data, value, nonce })
+      .catch(error => { throw new TransactionPreparationError(error); });
     const signed = await walletClient.signTransaction({ ...request, account: from } as Parameters<typeof walletClient.signTransaction>[0]);
     const hash = keccak256(signed);
     // Durably record the hash BEFORE broadcasting. A crash cannot hide a submitted step.

@@ -1,9 +1,12 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
+import { parseUnits } from 'viem';
 import { config } from './config.js';
 import { requireAccount, type AuthEnv } from './auth.js';
 import { db, positionsFor, save, uid } from './db.js';
-import { STOCKS, fetchQuotes, isPermissionApproved, isPermissionRevoked, spenderFor, type Quote } from './chain.js';
+import { STOCKS, USDC, fetchQuotes, isPermissionApproved, isPermissionRevoked, spenderFor, type Quote } from './chain.js';
+import { quoteSwap } from './swap.js';
+import { QuoteError } from './swap-errors.js';
 import { modeMatches, remainingBudget, withMandateLock } from './runner.js';
 import { AIError, aiSettings, completeJSON } from './openrouter.js';
 import { atomicWriteJson, persistentObject } from './persistence.js';
@@ -99,7 +102,26 @@ export async function makeProposal(m: Mandate, trade: NonNullable<z.infer<typeof
     rationale: `Wallet owner confirmed a chat ${trade.action} request for ${stock.symbol}.`,
   };
   await validateTrade(m, proposal, quotes);
+  await assertTradeRoute(m, proposal);
   return Proposal.parse(proposal);
+}
+
+/** Check the exact direction and amount without signing; execution obtains a fresh quote after the cancel window. */
+async function assertTradeRoute(m: Mandate, proposal: ChatProposal) {
+  if (config.dryRun) return;
+  const buy = proposal.action === 'buy';
+  const position = positionsFor(m.id).find(p => p.token.toLowerCase() === proposal.token.toLowerCase());
+  const amount = buy ? parseUnits(proposal.usd!.toFixed(6), 6)
+    : BigInt(position!.raw) * BigInt(Math.floor(proposal.fraction! * 10_000)) / 10_000n;
+  if (amount <= 0n) throw new ChatError('The order amount is too small.');
+  try {
+    await quoteSwap({ from: spenderFor(m.account).address,
+      fromToken: buy ? USDC : proposal.token as `0x${string}`,
+      toToken: buy ? proposal.token as `0x${string}` : USDC, fromAmount: amount });
+  } catch (error) {
+    if (error instanceof QuoteError && error.kind === 'no_route') throw new ChatError(`No swap route is available for ${proposal.symbol} at this amount right now. No order was created.`);
+    throw new ChatError(`${error instanceof QuoteError ? error.message : 'The swap quote could not be validated.'} No order was created.`);
+  }
 }
 
 export const chatRoutes = new Hono<AuthEnv>();
@@ -206,6 +228,7 @@ chatRoutes.post('/proposals/:id/confirm', async c => {
       // The app signs and registers the sell permission before confirming; this guards a stale client or a direct API call.
       if (sellApprovalNeeded(m, proposal.token, config.dryRun)) throw new ChatError(`Approve selling ${proposal.symbol} in Coinbase first, then confirm again.`);
     }
+    await assertTradeRoute(m, proposal);
     const order: Order = { id, account: m.account, mandateId: m.id, source: 'chat', action: proposal.action, symbol: proposal.symbol, token: proposal.token as `0x${string}`, usd: proposal.usd, fraction: proposal.fraction, rationale: proposal.rationale, dryRun: config.dryRun, status: 'queued', createdAt: now(), updatedAt: now(), executeAfter: now() + 60 };
     db.orders.unshift(order);
     db.activity.unshift({ id: uid(), account: m.account, mandateId: m.id, kind: 'queued', symbol: order.symbol, amountUsd: order.usd, ts: now(), rationale: `${config.dryRun ? 'Simulation' : 'Live'} order queued. Cancel within 60 seconds.` });

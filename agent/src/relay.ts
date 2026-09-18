@@ -2,6 +2,7 @@
 import type { Address, Hex } from './types.js';
 import { z } from 'zod';
 import { NATIVE_TOKEN, type SwapQuote } from './lifi.js';
+import { fetchQuote, quoteHttpError } from './swap-errors.js';
 
 const API = 'https://api.relay.link';
 // Relay publishes its own deployments: GET https://api.relay.link/chains -> chains[id=8453].contracts.
@@ -43,21 +44,25 @@ export async function quoteSwap(params: {
   // Attribution requires authentication: a `referrer` without a key is rejected (401 UNAUTHORIZED_QUOTE).
   // Without a key the public quote still works, so the key is optional and never required to trade.
   const apiKey = process.env.RELAY_API_KEY?.trim();
-  const res = await fetch(`${API}/quote`, {
+  const request = (key?: string) => fetchQuote(`${API}/quote`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...(apiKey ? { 'x-api-key': apiKey } : {}) },
+    headers: { 'content-type': 'application/json', ...(key ? { 'x-api-key': key } : {}) },
     body: JSON.stringify({
       user: params.from, recipient: params.from,
       originChainId: 8453, destinationChainId: 8453,
       originCurrency: params.fromToken, destinationCurrency: params.toToken,
       amount: params.fromAmount.toString(), tradeType: 'EXACT_INPUT',
       slippageTolerance: String(Math.round((params.slippage ?? 0.01) * 10_000)), // basis points
-      ...(apiKey ? { referrer: 'mandate' } : {}),
+      ...(key ? { referrer: 'mandate' } : {}),
     }),
     signal: AbortSignal.timeout(15_000), redirect: 'manual',
   });
-  if (res.status === 429) throw new Error('The swap provider is busy. Please try again shortly.');
-  if (!res.ok) throw new Error('Swap quote unavailable.');
+  let res = await request(apiKey);
+  if (apiKey && res.status === 401) {
+    const error = await res.clone().json().catch(() => null) as { errorCode?: string } | null;
+    if (error?.errorCode === 'UNAUTHORIZED_QUOTE' || error?.errorCode === 'UNAUTHORIZED') res = await request();
+  }
+  if (!res.ok) throw await quoteHttpError(res);
   const parsed = QuoteResponse.safeParse(await res.json());
   if (!parsed.success) throw new Error('Swap quote does not match the requested trade.');
   const { steps, details } = parsed.data;
